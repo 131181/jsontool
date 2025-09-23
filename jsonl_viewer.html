@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON管理器</title>
+    <link rel="stylesheet" href="https://unpkg.com/antd@5.27.2/dist/antd.min.css">
+    <style>
+        html,
+        body,
+        #root {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        body {
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .toolbar {
+            margin: 8px 5px 16px 5px;
+        }
+
+        .column-search-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+
+        .table-container {
+            height: 100%;
+        }
+
+        .ant-table-cell {
+            cursor: pointer;
+        }
+
+        /* 单元格统一省略与悬浮提示承载容器 */
+        .cell-ellipsis {
+            display: inline-block;
+            max-width: 280px;
+            /* 可被配置覆盖 */
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: middle;
+        }
+
+        /* 操作列样式，固定宽度并允许按钮垂直排列 */
+        .op-col {
+            width: 120px;
+            /* 可被配置覆盖 */
+        }
+
+        .op-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: flex-start;
+        }
+
+        /* Tooltip 内容样式，限制高度并添加滚动 */
+        .tooltip-content {
+            overflow-y: auto !important;
+            word-break: break-all !important;
+            max-width: inherit !important;
+        }
+
+        .tooltip-content pre {
+            margin: 0 !important;
+            white-space: pre-wrap !important;
+            word-break: break-all !important;
+        }
+
+        /* 全局覆盖层与轻量加载指示器，避免 React 渲染阻塞导致的延迟显示 */
+        .global-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.35);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+
+        .global-overlay .spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid #1677ff33;
+            border-top-color: #1677ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .global-overlay .label {
+            margin-top: 10px;
+            color: #1677ff;
+            font-size: 14px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/dayjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/locale/zh-cn.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/antd@5.27.2/dist/antd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/antd@5.27.2/dist/antd-with-locales.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { Table, Input, Button, Modal, Form, Select, Space, Popconfirm, message, Upload, Drawer, Tag, Typography, DatePicker } = antd;
+        const { RangePicker } = DatePicker;
+        if (typeof dayjs !== 'undefined') { dayjs.locale('zh-cn'); }
+        const { Option } = Select;
+        // 直接 DOM 级别的全局覆盖层，确保在主线程繁忙前即可显示
+        const overlayId = 'global-loading-overlay';
+        function showGlobalOverlay() {
+            if (document.getElementById(overlayId)) return;
+            const el = document.createElement('div');
+            el.id = overlayId;
+            el.className = 'global-overlay';
+            el.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;"><div class="spinner"></div><div class="label">加载中...</div></div>';
+            document.body.appendChild(el);
+        }
+        function hideGlobalOverlay() {
+            const el = document.getElementById(overlayId);
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+        }
+
+        // 默认配置
+        const defaultConfig = {
+            fieldEnum: [
+                {
+                    key: "columns",
+                    value: "表格列配置",
+                    type: "json"
+                },
+                {
+                    key: "clone_status_filters",
+                    value: "克隆状态筛选配置",
+                    type: "json"
+                },
+                {
+                    key: "pageSize",
+                    value: "每页显示条数配置",
+                    type: "number"
+                },
+                {
+                    key: "rowKey",
+                    value: "表格行key（default或字段名）",
+                    type: "string"
+                },
+                {
+                    key: "columnMinWidth",
+                    value: "列最小宽度（px）",
+                    type: "number"
+                },
+                {
+                    key: "cellMaxWidth",
+                    value: "单元格最大展示宽度（px，超出省略）",
+                    type: "number"
+                },
+                {
+                    key: "cellMaxLines",
+                    value: "单元格最多显示行数（多行省略）",
+                    type: "number"
+                },
+                {
+                    key: "opColumnWidth",
+                    value: "操作列宽度（px）",
+                    type: "number"
+                },
+                {
+                    key: "tooltipMaxHeight",
+                    value: "悬浮提示框最大高度（px）",
+                    type: "number"
+                }
+            ],
+            columns: [
+                { title: '名称', dataIndex: 'name', editable: true, sortable: true, searchable: true },
+                { title: 'URL', dataIndex: 'url', editable: true, searchable: true },
+                { title: '更新时间', dataIndex: 'updated_at', editable: true, sortable: true, searchable: true, isDate: true, dateFormat: 'YYYY-MM-DD HH:mm:ss' },
+                { title: '克隆时间', dataIndex: 'cloned_at', editable: true, sortable: true, searchable: true },
+                { title: '克隆状态', dataIndex: 'clone_status', editable: true, sortable: true, searchable: true },
+                { title: '文件夹名', dataIndex: 'folder_name', editable: true, sortable: true, searchable: true }
+            ],
+            clone_status_filters: [
+                { text: '废弃/已删除', value: 'rubbish', tagType: 'red' },
+                { text: '未知/已存在', value: 'existed_before_run', tagType: 'blue' },
+                { text: '已克隆', value: 'cloned', tagType: 'green' }
+            ],
+            pageSize: 20,
+            rowKey: 'default',
+            columnMinWidth: 150,
+            cellMaxWidth: 280,
+            cellMaxLines: 1,
+            opColumnWidth: 120,
+            tooltipMaxHeight: 300
+        };
+
+        // 解析jsonl
+        function parseJsonl(text) {
+            return text.split('\n').filter(Boolean).map(line => {
+                try { return JSON.parse(line); } catch { return null; }
+            }).filter(Boolean);
+        }
+        // 导出jsonl
+        function toJsonl(arr) {
+            return arr.map(obj => JSON.stringify(obj)).join('\n');
+        }
+
+        // 读取文件
+        function readFile(file, cb) {
+            const reader = new FileReader();
+            reader.onload = e => cb(e.target.result);
+            reader.readAsText(file, 'utf-8');
+        }
+
+        // 主组件
+        function App() {
+            // 状态
+            const [data, setData] = useState([]);
+            const [filteredData, setFilteredData] = useState([]);
+            const [searchText, setSearchText] = useState('');
+            const [editingKey, setEditingKey] = useState('');
+            const [editRow, setEditRow] = useState(null);
+            const [jsonModal, setJsonModal] = useState({ visible: false, record: null });
+            const [config, setConfig] = useState(defaultConfig);
+            const [configDrawer, setConfigDrawer] = useState(false);
+            const [columnSearch, setColumnSearch] = useState({});
+            const [logFileName, setLogFileName] = useState('clone_log.jsonl');
+            const [configFileName, setConfigFileName] = useState('config.json');
+            const [editMode, setEditMode] = useState(null);
+            const [tableHeight, setTableHeight] = useState(500);
+            const [tablePageSize, setTablePageSize] = useState(defaultConfig.pageSize || 20);
+            const [isPending, startTransition] = React.useTransition();
+            const pageSizeChangingRef = React.useRef(false);
+            const [editingCol, setEditingCol] = useState('');
+            const toolbarRef = React.useRef(null);
+            // 设置抽屉中 JSON 字段的临时草稿，允许中间态为无效 JSON
+            const [configJsonDraft, setConfigJsonDraft] = useState({});
+            // 配置原始快照与脏状态、关闭确认
+            const [configOriginal, setConfigOriginal] = useState(null);
+            const [configDirty, setConfigDirty] = useState(false);
+            const [confirmCloseVisible, setConfirmCloseVisible] = useState(false);
+            const [resetConfigModal, setResetConfigModal] = useState(false);
+            const [importConfigModal, setImportConfigModal] = useState({ open: false, newConfig: null, fileName: '' });
+
+            useEffect(() => {
+                function updateHeight() {
+                    const toolbarHeight = toolbarRef.current ? toolbarRef.current.offsetHeight : 0;
+                    setTableHeight(window.innerHeight - toolbarHeight - 170); // 170为额外margin，可微调
+                }
+                updateHeight();
+                window.addEventListener('resize', updateHeight);
+                return () => window.removeEventListener('resize', updateHeight);
+            }, [config, columnSearch]);
+
+            // 同步外部配置中的 pageSize 变更
+            useEffect(() => {
+                if (config && typeof config.pageSize === 'number' && config.pageSize > 0) {
+                    setTablePageSize(config.pageSize);
+                }
+            }, [config && config.pageSize]);
+
+            // 过渡结束后，关闭全局提示并解锁
+            useEffect(() => {
+                if (!isPending && pageSizeChangingRef.current) {
+                    pageSizeChangingRef.current = false;
+                    hideGlobalOverlay();
+                }
+            }, [isPending]);
+
+            // 工具栏列搜索控件
+            const renderColumnSearchInputs = React.useMemo(() => () => (
+                (config.columns || []).filter(col => col.searchable !== false).map(col => {
+                    const filterKey = col.dataIndex + '_filters';
+                    const filters = config[filterKey];
+                    if (filters) {
+                        return (
+                            <Select
+                                key={col.dataIndex}
+                                allowClear
+                                style={{ width: 140 }}
+                                placeholder={col.title}
+                                value={columnSearch[col.dataIndex]}
+                                onChange={val => setColumnSearch(prev => ({ ...prev, [col.dataIndex]: val }))}
+                            >
+                                {filters.map(opt => (
+                                    <Option key={opt.value} value={opt.value}>{opt.text}</Option>
+                                ))}
+                            </Select>
+                        );
+                    }
+                    if (col.isDate) {
+                        return (
+                            <RangePicker
+                                key={col.dataIndex}
+                                allowClear
+                                style={{ width: 330 }}
+                                placeholder={[`${col.title} - 开始`, `${col.title} - 结束`]}
+                                showTime={col.dateFormat && col.dateFormat.includes('HH:mm:ss')}
+                                format={col.dateFormat || 'YYYY-MM-DD HH:mm:ss'}
+                                value={columnSearch[col.dataIndex] ? [
+                                    dayjs(columnSearch[col.dataIndex].start),
+                                    dayjs(columnSearch[col.dataIndex].end)
+                                ] : null}
+                                onChange={(dates) => setColumnSearch(prev => ({
+                                    ...prev,
+                                    [col.dataIndex]: dates ? {
+                                        start: dates[0].format(col.dateFormat || 'YYYY-MM-DD HH:mm:ss'),
+                                        end: dates[1].format(col.dateFormat || 'YYYY-MM-DD HH:mm:ss')
+                                    } : null
+                                }))}
+                            />
+                        );
+                    }
+                    return (
+                        <Input
+                            key={col.dataIndex}
+                            allowClear
+                            style={{ width: 140 }}
+                            placeholder={col.title}
+                            value={columnSearch[col.dataIndex] || ''}
+                            onChange={e => setColumnSearch(prev => ({ ...prev, [col.dataIndex]: e.target.value }))}
+                            onPressEnter={e => setColumnSearch(prev => ({ ...prev, [col.dataIndex]: e.target.value }))}
+                        />
+                    );
+                })
+            ), [config, columnSearch]);
+
+            // 通用字符串比较
+            const createStringComparator = (dataIndex) => (a, b) => {
+                const av = a[dataIndex];
+                const bv = b[dataIndex];
+                const as = (av === null || av === undefined) ? '' :
+                    (typeof av === 'object') ? JSON.stringify(av) :
+                        av.toString();
+                const bs = (bv === null || bv === undefined) ? '' :
+                    (typeof bv === 'object') ? JSON.stringify(bv) :
+                        bv.toString();
+                return as.localeCompare(bs);
+            };
+
+            // URL 检测和渲染
+            const renderTextWithLinks = (text) => {
+                if (!text || typeof text !== 'string') return text;
+
+                const urlRegex = /(https?:\/\/[^\s]+)/g;
+                const parts = text.split(urlRegex);
+
+                return parts.map((part, index) => {
+                    if (urlRegex.test(part)) {
+                        return <a key={index} href={part} target="_blank" rel="noopener noreferrer">{part}</a>;
+                    }
+                    return part;
+                });
+            };
+
+            // 表格列定义
+            const columns = React.useMemo(() => {
+                const baseCols = (config.columns || []).map(col => {
+                    return {
+                        ...col,
+                        ellipsis: false,
+                        width: Math.max(config.columnMinWidth || 160, col.width || 0) || (config.columnMinWidth || 160),
+                        sorter: col.sortable ? createStringComparator(col.dataIndex) : undefined,
+                        render: (text) => {
+                            // 枚举列依然渲染Tag
+                            const filterKey = col.dataIndex + '_filters';
+                            const filters = config[filterKey];
+                            if (filters) {
+                                // 找等值匹配
+                                let found = filters.find(f => f.value === text);
+                                if (found) {
+                                    return <Tag color={found.tagType || undefined}>{found.text}</Tag>;
+                                }
+                            }
+                            // 处理不同类型的数据显示
+                            let displayContent = '';
+                            let tooltipContent = '';
+
+                            if (text === null || text === undefined) {
+                                displayContent = '';
+                                tooltipContent = '';
+                            } else if (typeof text === 'boolean') {
+                                displayContent = text.toString();
+                                tooltipContent = text.toString();
+                            } else if (typeof text === 'number') {
+                                displayContent = text.toString();
+                                tooltipContent = text.toString();
+                            } else if (typeof text === 'object') {
+                                displayContent = JSON.stringify(text, null, 2);
+                                tooltipContent = (
+                                    <div className="tooltip-content" style={{
+                                        maxHeight: (config.tooltipMaxHeight || 300) + 'px'
+                                    }}>
+                                        <pre>{displayContent}</pre>
+                                    </div>
+                                );
+                            } else {
+                                displayContent = text.toString();
+                                tooltipContent = (
+                                    <div className="tooltip-content" style={{
+                                        maxHeight: (config.tooltipMaxHeight || 300) + 'px'
+                                    }}>
+                                        {text.toString()}
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <Typography.Paragraph
+                                    style={{ maxWidth: (config.cellMaxWidth || 280), marginBottom: 0 }}
+                                    ellipsis={{
+                                        rows: config.cellMaxLines || 1,
+                                        tooltip: tooltipContent
+                                    }}
+                                >
+                                    {typeof displayContent === 'string' ? renderTextWithLinks(displayContent) : displayContent}
+                                </Typography.Paragraph>
+                            );
+                        }
+                    };
+                });
+                // 追加操作列
+                const opCol = {
+                    title: '操作',
+                    dataIndex: 'operation',
+                    fixed: 'right',
+                    width: config.opColumnWidth || 120,
+                    render: (_, record) => (
+                        <div className="op-buttons">
+                            <Button size="small" block onClick={() => showJsonModal(record)}>JSON编辑</Button>
+                            <Button size="small" block onClick={() => startModalEdit(record)}>编辑</Button>
+                            <Popconfirm title="确定删除？" onConfirm={() => deleteRow(record)}>
+                                <Button size="small" block danger>删除</Button>
+                            </Popconfirm>
+                        </div>
+                    )
+                };
+                return [...baseCols, opCol];
+            }, [config]);
+
+            // 操作列由 columns 的 useMemo 内统一添加，避免重复
+
+            // 双击单元格
+            function startInlineEdit(record, col) {
+                if (editMode === 'modal') return;
+                // 如果已处于当前行的行内编辑，再次双击则保存
+                const isDefault = !(config.rowKey && config.rowKey !== 'default');
+                const currentKey = isDefault ? record.__row_index : record[config.rowKey];
+                if (editingKey === currentKey && editMode === 'inline') {
+                    saveEdit();
+                    setEditingCol('');
+                    return;
+                }
+                setEditRow({ ...record });
+                setEditingKey(currentKey);
+                setEditMode('inline');
+                setEditingCol(col);
+            }
+            // 点击编辑按钮
+            function startModalEdit(record) {
+                // 如果当前是行内编辑，先取消行内编辑
+                if (editMode === 'inline') {
+                    cancelEdit();
+                }
+                setEditRow({ ...record });
+                const isDefault = !(config.rowKey && config.rowKey !== 'default');
+                const currentKey = isDefault ? record.__row_index : record[config.rowKey];
+                setEditingKey(currentKey);
+                setEditMode('modal');
+            }
+            // 保存
+            function saveEdit() {
+                const isDefault = !(config.rowKey && config.rowKey !== 'default');
+                if (isDefault) {
+                    const index = editRow.__row_index;
+                    setData(prev => prev.map((row, idx) => {
+                        if (idx === index) {
+                            const { __row_index, ...rest } = editRow || {};
+                            return { ...rest };
+                        }
+                        return row;
+                    }));
+                } else {
+                    setData(prev => prev.map(row => (row[config.rowKey] === editRow[config.rowKey] ? editRow : row)));
+                }
+                setEditingKey('');
+                setEditRow(null);
+                setEditMode(null);
+            }
+            // 取消
+            function cancelEdit() {
+                setEditingKey('');
+                setEditRow(null);
+                setEditMode(null);
+            }
+
+            // 删除
+            function deleteRow(record) {
+                const isDefault = !(config.rowKey && config.rowKey !== 'default');
+                if (isDefault) {
+                    setData(prev => prev.filter((_, idx) => idx !== record.__row_index));
+                } else {
+                    setData(prev => prev.filter(row => row[config.rowKey] !== record[config.rowKey]));
+                }
+                message.success('已删除');
+            }
+
+            // 原始JSON
+            function showJsonModal(record) {
+                const { __row_index, ...cleaned } = record || {};
+                setJsonModal({ visible: true, record: { ...record }, text: JSON.stringify(cleaned, null, 2) });
+            }
+            function saveJsonModal() {
+                try {
+                    const obj = JSON.parse(jsonModal.text);
+                    const isDefault = !(config.rowKey && config.rowKey !== 'default');
+                    if (isDefault) {
+                        const index = jsonModal.record && jsonModal.record.__row_index;
+                        if (typeof index === 'number') {
+                            setData(prev => prev.map((row, idx) => (idx === index ? obj : row)));
+                        }
+                    } else {
+                        setData(prev => prev.map(row => (row[config.rowKey] === obj[config.rowKey] ? obj : row)));
+                    }
+                    setJsonModal({ visible: false, record: null });
+                    message.success('已保存');
+                } catch {
+                    message.error('JSON格式错误');
+                }
+            }
+
+            // 文件导入
+            function importLogFile(file) {
+                showGlobalOverlay();
+                readFile(file, text => {
+                    try {
+                        const trimmed = (text || '').trim();
+                        let parsed = [];
+                        try {
+                            const json = JSON.parse(trimmed);
+                            parsed = Array.isArray(json) ? json : [json];
+                        } catch {
+                            parsed = parseJsonl(text);
+                        }
+                        setData(parsed);
+                        setLogFileName(file.name);
+                        message.success('JSON已导入');
+                    } catch (e) {
+                        message.error('JSON解析失败');
+                    } finally {
+                        hideGlobalOverlay();
+                    }
+                });
+                return false;
+            }
+            function importConfigFile(file) {
+                showGlobalOverlay();
+                readFile(file, text => {
+                    try {
+                        const newConfig = JSON.parse(text);
+                        // 检查当前是否有数据
+                        if (data.length > 0) {
+                            // 隐藏覆盖层并使用独立的导入弹窗
+                            hideGlobalOverlay();
+                            setImportConfigModal({ open: true, newConfig, fileName: file.name });
+                        } else {
+                            setConfig(newConfig);
+                            setConfigFileName(file.name);
+                            message.success('配置文件已导入');
+                            hideGlobalOverlay();
+                        }
+                    } catch {
+                        hideGlobalOverlay();
+                        message.error('配置文件格式错误');
+                    }
+                });
+                return false;
+            }
+
+            // 重置功能
+            function clearData() {
+                Modal.confirm({
+                    title: '确认清空数据',
+                    content: '此操作将清空所有表格数据，是否继续？',
+                    okText: '确认清空',
+                    cancelText: '取消',
+                    okType: 'danger',
+                    onOk: () => {
+                        setData([]);
+                        message.success('数据已清空');
+                    }
+                });
+            }
+
+            function resetConfig() {
+                // 检查当前是否有数据
+                if (data.length > 0) {
+                    setResetConfigModal(true);
+                } else {
+                    Modal.confirm({
+                        title: '确认重置配置',
+                        content: '此操作将恢复默认配置，是否继续？',
+                        okText: '确认重置',
+                        cancelText: '取消',
+                        onOk: () => {
+                            setConfig(defaultConfig);
+                            setConfigFileName('config.json');
+                            message.success('配置已重置为默认值');
+                        }
+                    });
+                }
+            }
+
+            function resetAll() {
+                Modal.confirm({
+                    title: '确认全部重置',
+                    content: '此操作将清空所有数据并恢复默认配置，是否继续？',
+                    okText: '确认重置',
+                    cancelText: '取消',
+                    okType: 'danger',
+                    onOk: () => {
+                        setData([]);
+                        setConfig(defaultConfig);
+                        setConfigFileName('config.json');
+                        setLogFileName('clone_log.jsonl');
+                        setColumnSearch({});
+                        setSearchText('');
+                        message.success('已全部重置');
+                    }
+                });
+            }
+
+            // 文件导出
+            function exportLogFile() {
+                const blob = new Blob([toJsonl(data)], { type: 'text/plain' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = logFileName;
+                a.click();
+            }
+            function exportConfigFile() {
+                const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = configFileName;
+                a.click();
+            }
+
+            // 设置
+            function openConfigDrawer() {
+                // 初始化 JSON 草稿为当前 config 对应字段的字符串
+                const draft = {};
+                (config.fieldEnum || []).forEach(field => {
+                    if (field.type === 'json') {
+                        try {
+                            draft[field.key] = JSON.stringify(config[field.key] ?? null, null, 2);
+                        } catch {
+                            draft[field.key] = String(config[field.key] ?? '');
+                        }
+                    }
+                });
+                setConfigJsonDraft(draft);
+                // 保存原始快照用于放弃修改时恢复
+                try {
+                    setConfigOriginal(JSON.parse(JSON.stringify(config)));
+                } catch {
+                    setConfigOriginal(config);
+                }
+                setConfigDirty(false);
+                setConfigDrawer(true);
+            }
+            function saveConfigDrawer(newConfig) {
+                setConfig(newConfig);
+                setConfigDrawer(false);
+                message.success('设置已保存');
+            }
+            function handleSaveConfig() {
+                // 基于当前 config 和草稿，生成新的配置对象
+                const next = { ...config };
+                for (const field of (config.fieldEnum || [])) {
+                    if (field.type === 'json') {
+                        const raw = Object.prototype.hasOwnProperty.call(configJsonDraft, field.key)
+                            ? configJsonDraft[field.key]
+                            : JSON.stringify(config[field.key] ?? null, null, 2);
+                        try {
+                            next[field.key] = JSON.parse(raw);
+                        } catch (e) {
+                            message.error(`配置项 ${field.value || field.key} JSON格式错误`);
+                            return;
+                        }
+                    }
+                }
+                saveConfigDrawer(next);
+                setConfigDirty(false);
+            }
+            function handleAttemptCloseDrawer() {
+                if (configDirty) {
+                    setConfirmCloseVisible(true);
+                } else {
+                    setConfigDrawer(false);
+                }
+            }
+            function handleDiscardChanges() {
+                if (configOriginal) {
+                    setConfig(configOriginal);
+                }
+                setConfigDrawer(false);
+                setConfirmCloseVisible(false);
+                setConfigDirty(false);
+                setConfigJsonDraft({});
+            }
+
+            // useEffect 过滤逻辑
+            useEffect(() => {
+                let d = [...data];
+                // 全局搜索
+                if (searchText) {
+                    d = d.filter(row => Object.values(row).some(
+                        v => (v + '').toLowerCase().includes(searchText.toLowerCase())
+                    ));
+                }
+                // 多列搜索
+                Object.entries(columnSearch).forEach(([col, val]) => {
+                    if (val !== undefined && val !== '' && val !== null) {
+                        const filters = config[col + '_filters'] || [];
+                        const filterOpt = filters.find(f => f.value === val);
+                        if (typeof val === 'object' && val.start && val.end) {
+                            // 时间范围搜索
+                            const colConf = (config.columns || []).find(c => c.dataIndex === col);
+                            if (colConf && colConf.isDate) {
+                                d = d.filter(row => {
+                                    const rowTs = dayjs(row[col]).valueOf();
+                                    const startTs = dayjs(val.start).valueOf();
+                                    const endTs = dayjs(val.end).valueOf();
+                                    return rowTs >= startTs && rowTs <= endTs; // 包含边界
+                                });
+                            }
+                        } else {
+                            d = d.filter(row => (row[col] + '').toLowerCase().includes((val + '').toLowerCase()));
+                        }
+                    }
+                });
+                setFilteredData(d);
+            }, [data, searchText, columnSearch]);
+
+            // 渲染
+            return (
+                <div>
+                    <div className="toolbar" ref={toolbarRef}>
+                        <Space wrap>
+                            <Upload beforeUpload={importLogFile} showUploadList={false} accept=".json,.jsonl,.txt">
+                                <Button>导入JSON</Button>
+                            </Upload>
+                            <Button onClick={exportLogFile} disabled={!data.length}>导出JSON</Button>
+                            <Upload beforeUpload={importConfigFile} showUploadList={false} accept=".json">
+                                <Button>导入配置</Button>
+                            </Upload>
+                            <Button onClick={exportConfigFile}>导出配置</Button>
+                            <Button onClick={openConfigDrawer}>设置</Button>
+                            <Button onClick={clearData} disabled={!data.length} danger>清空数据</Button>
+                            <Button onClick={resetConfig}>重置配置</Button>
+                            <Button onClick={resetAll} danger>全部重置</Button>
+                            <Input.Search
+                                placeholder="全局搜索"
+                                allowClear
+                                style={{ width: 200 }}
+                                onSearch={setSearchText}
+                            />
+                        </Space>
+                        <div className="column-search-bar">
+                            {renderColumnSearchInputs()}
+                            <Button onClick={() => setColumnSearch({})}>重置</Button>
+                        </div>
+                    </div>
+                    <div className="table-container">
+                        <Table
+                            dataSource={filteredData.map((row, idx) => ({ ...row, __row_index: idx }))}
+                            columns={columns.map(col => {
+                                if (!col.editable) return col;
+                                return {
+                                    ...col,
+                                    onCell: record => ({
+                                        record,
+                                        editable: col.editable.toString(),
+                                        dataIndex: col.dataIndex,
+                                        title: col.title,
+                                        editing: ((config.rowKey && config.rowKey !== 'default') ? (editingKey === record[config.rowKey]) : (editingKey === record.__row_index)) && editMode === 'inline',
+                                        onDoubleClick: () => {
+                                            startInlineEdit(record, col.dataIndex);
+                                        }
+                                    })
+                                };
+                            })}
+                            rowKey={config.rowKey && config.rowKey !== 'default' ? config.rowKey : '__row_index'}
+                            pagination={{
+                                pageSize: tablePageSize,
+                                showSizeChanger: true,
+                                pageSizeOptions: ['10', '20', '50', '100'],
+                                onChange: (page, size) => {
+                                    // 立即展示覆盖层，避免页面阻塞前看不到动画
+                                    if (size && size !== tablePageSize && !pageSizeChangingRef.current) {
+                                        pageSizeChangingRef.current = true;
+                                        showGlobalOverlay();
+                                    }
+                                },
+                                onShowSizeChange: (current, size) => {
+                                    if (!size || size === tablePageSize) return;
+                                    // 执行重渲染过渡
+                                    if (!pageSizeChangingRef.current) {
+                                        pageSizeChangingRef.current = true;
+                                        showGlobalOverlay();
+                                    }
+                                    // 推迟到下一事件循环，确保覆盖层先插入 DOM 并绘制
+                                    setTimeout(() => {
+                                        startTransition(() => setTablePageSize(size));
+                                    }, 0);
+                                }
+                            }}
+                            components={{
+                                body: {
+                                    cell: props => (
+                                        <EditableCell
+                                            {...props}
+                                            editRow={editRow}
+                                            setEditRow={setEditRow}
+                                            editingCol={editingCol}
+                                            saveEdit={saveEdit}
+                                            config={config}   // 直接传递
+                                        />
+                                    )
+                                }
+                            }}
+                            scroll={{ y: tableHeight, x: 'max-content' }}
+                        />
+                    </div>
+                    {/* 编辑行 */}
+                    <Modal
+                        open={editMode === 'modal'}
+                        title="编辑"
+                        onOk={saveEdit}
+                        onCancel={cancelEdit}
+                        okText="保存"
+                        cancelText="取消"
+                        width={600}
+                        centered
+                        bodyStyle={{
+                            maxHeight: '70vh',
+                            overflowY: 'auto',
+                            paddingRight: '8px'
+                        }}
+                    >
+                        <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                            <Form layout="horizontal" labelAlign="right" labelCol={{ span: 4 }} wrapperCol={{ span: 19 }}>
+                                {editRow && Object.keys(editRow).filter(key => key !== '__row_index').map(key => {
+                                    const colConf = (config.columns || []).find(col => col.dataIndex === key);
+                                    const editable = colConf ? !!colConf.editable : true;
+                                    const filters = config[key + '_filters'] || [];
+                                    return (
+                                        <Form.Item label={colConf ? colConf.title : key} key={key}>
+                                            {filters.length > 0 ? (
+                                                <Select
+                                                    value={editRow[key]}
+                                                    onChange={val => setEditRow({ ...editRow, [key]: val })}
+                                                    disabled={!editable}
+                                                >
+                                                    {filters.map(opt => (
+                                                        <Option key={opt.value} value={opt.value}>{opt.text}</Option>
+                                                    ))}
+                                                </Select>
+                                            ) : colConf && colConf.isDate ? (
+                                                <DatePicker
+                                                    showTime={colConf.dateFormat && colConf.dateFormat.includes('HH:mm:ss')}
+                                                    format={colConf.dateFormat || 'YYYY-MM-DD HH:mm:ss'}
+                                                    value={editRow[key] ? dayjs(editRow[key]) : null}
+                                                    onChange={(date) => setEditRow({ ...editRow, [key]: date ? date.format(colConf.dateFormat || 'YYYY-MM-DD HH:mm:ss') : null })}
+                                                    disabled={!editable}
+                                                />
+                                            ) : (
+                                                (typeof editRow[key] === 'object' && editRow[key] !== null
+                                                    ? <Input.TextArea
+                                                        rows={4}
+                                                        value={JSON.stringify(editRow[key], null, 2)}
+                                                        onChange={e => {
+                                                            const val = e.target.value;
+                                                            try {
+                                                                const parsed = JSON.parse(val);
+                                                                setEditRow({ ...editRow, [key]: parsed });
+                                                            } catch {
+                                                                setEditRow({ ...editRow, [key]: val });
+                                                            }
+                                                        }}
+                                                        disabled={!editable}
+                                                    />
+                                                    : (typeof editRow[key] === 'boolean'
+                                                        ? <Select
+                                                            value={editRow[key]}
+                                                            onChange={val => setEditRow({ ...editRow, [key]: val })}
+                                                            disabled={!editable}
+                                                        >
+                                                            <Option value={true}>true</Option>
+                                                            <Option value={false}>false</Option>
+                                                        </Select>
+                                                        : <Input
+                                                            value={editRow[key] === null || editRow[key] === undefined ? '' : editRow[key].toString()}
+                                                            onChange={e => {
+                                                                const val = e.target.value;
+                                                                // 尝试转换为数字
+                                                                if (!isNaN(val) && val !== '') {
+                                                                    setEditRow({ ...editRow, [key]: Number(val) });
+                                                                } else {
+                                                                    setEditRow({ ...editRow, [key]: val });
+                                                                }
+                                                            }}
+                                                            disabled={!editable}
+                                                        />
+                                                    )
+                                                )
+                                            )}
+                                        </Form.Item>
+                                    );
+                                })}
+                            </Form>
+                        </div>
+                    </Modal>
+                    {/* 原始JSON */}
+                    <Modal
+                        open={jsonModal.visible}
+                        title="JSON编辑"
+                        onOk={saveJsonModal}
+                        onCancel={() => setJsonModal({ visible: false, record: null })}
+                        okText="保存"
+                        cancelText="取消"
+                        width={800}
+                        centered
+                        bodyStyle={{
+                            maxHeight: '70vh',
+                            overflowY: 'auto'
+                        }}
+                    >
+                        <Input.TextArea
+                            rows={20}
+                            value={jsonModal.text}
+                            onChange={e => setJsonModal({ ...jsonModal, text: e.target.value })}
+                            style={{
+                                fontFamily: 'monospace',
+                                fontSize: '12px'
+                            }}
+                        />
+                    </Modal>
+                    {/* 设置抽屉 */}
+                    <Drawer
+                        title="设置"
+                        open={configDrawer}
+                        onClose={handleAttemptCloseDrawer}
+                        width={400}
+                        footer={
+                            <Button type="primary" onClick={handleSaveConfig}>保存设置</Button>
+                        }
+                    >
+                        <Form layout="vertical">
+                            {/* fieldEnum 配置项本身可编辑 */}
+                            <Form.Item label="配置项描述（fieldEnum，JSON数组）">
+                                <Input.TextArea
+                                    rows={6}
+                                    value={JSON.stringify(config.fieldEnum, null, 2)}
+                                    onChange={e => {
+                                        try {
+                                            setConfig({ ...config, fieldEnum: JSON.parse(e.target.value) });
+                                            setConfigDirty(true);
+                                        } catch { }
+                                    }}
+                                />
+                            </Form.Item>
+                            {/* 根据 fieldEnum 渲染其它设置项 */}
+                            {(config.fieldEnum || []).map(field => {
+                                if (field.type === 'json') {
+                                    return (
+                                        <Form.Item label={field.value + '（JSON）'} key={field.key}>
+                                            <Input.TextArea
+                                                rows={6}
+                                                value={Object.prototype.hasOwnProperty.call(configJsonDraft, field.key)
+                                                    ? configJsonDraft[field.key]
+                                                    : (() => {
+                                                        try { return JSON.stringify(config[field.key] ?? null, null, 2); } catch { return String(config[field.key] ?? ''); }
+                                                    })()}
+                                                onChange={e => {
+                                                    const val = e.target.value;
+                                                    setConfigJsonDraft(prev => ({ ...prev, [field.key]: val }));
+                                                    setConfigDirty(true);
+                                                    // 若当前草稿可被解析，则实时预览生效
+                                                    try {
+                                                        const parsed = JSON.parse(val);
+                                                        setConfig(prev => ({ ...prev, [field.key]: parsed }));
+                                                    } catch { /* ignore preview when invalid */ }
+                                                }}
+                                            />
+                                        </Form.Item>
+                                    );
+                                } else if (field.type === 'number') {
+                                    return (
+                                        <Form.Item label={field.value} key={field.key}>
+                                            <Input
+                                                type="number"
+                                                value={config[field.key]}
+                                                onChange={e => { setConfig({ ...config, [field.key]: Number(e.target.value) }); setConfigDirty(true); }}
+                                            />
+                                        </Form.Item>
+                                    );
+                                } else {
+                                    // 默认文本
+                                    return (
+                                        <Form.Item label={field.value} key={field.key}>
+                                            <Input
+                                                value={config[field.key] || ''}
+                                                onChange={e => { setConfig({ ...config, [field.key]: e.target.value }); setConfigDirty(true); }}
+                                            />
+                                        </Form.Item>
+                                    );
+                                }
+                            })}
+                        </Form>
+                    </Drawer>
+                    <Modal
+                        open={confirmCloseVisible}
+                        title="未保存的更改"
+                        onCancel={() => setConfirmCloseVisible(false)}
+                        footer={[
+                            <Button key="save" type="primary" onClick={handleSaveConfig}>保存</Button>,
+                            <Button key="discard" danger onClick={handleDiscardChanges}>不保存</Button>,
+                            <Button key="cancel" onClick={() => setConfirmCloseVisible(false)}>取消</Button>
+                        ]}
+                        centered
+                    >
+                        您有未保存的设置更改，是否保存？
+                    </Modal>
+                    <Modal
+                        open={resetConfigModal}
+                        title="检测到当前有数据"
+                        onCancel={() => setResetConfigModal(false)}
+                        footer={[
+                            <Button key="cancel" onClick={() => setResetConfigModal(false)}>取消</Button>,
+                            <Button key="keep" type="primary" onClick={() => {
+                                setConfig(defaultConfig);
+                                setConfigFileName('config.json');
+                                message.success('配置已重置为默认值（数据保留）');
+                                setResetConfigModal(false);
+                            }}>保留数据并重置</Button>,
+                            <Button key="clear" danger onClick={() => {
+                                setData([]);
+                                setConfig(defaultConfig);
+                                setConfigFileName('config.json');
+                                message.success('数据已清空，配置已重置为默认值');
+                                setResetConfigModal(false);
+                            }}>清空数据并重置</Button>
+                        ]}
+                        centered
+                    >
+                        重置配置可能会影响数据显示，请选择操作：
+                    </Modal>
+                    <Modal
+                        open={importConfigModal.open}
+                        title="检测到当前有数据"
+                        onCancel={() => setImportConfigModal({ open: false, newConfig: null, fileName: '' })}
+                        footer={[
+                            <Button key="cancel" onClick={() => setImportConfigModal({ open: false, newConfig: null, fileName: '' })}>取消</Button>,
+                            <Button key="keep" type="primary" onClick={() => {
+                                if (importConfigModal.newConfig) {
+                                    setConfig(importConfigModal.newConfig);
+                                    setConfigFileName(importConfigModal.fileName || 'config.json');
+                                    message.success('配置文件已导入（数据保留）');
+                                } else {
+                                    message.error('配置文件导入失败');
+                                }
+                                setImportConfigModal({ open: false, newConfig: null, fileName: '' });
+                            }}>保留数据并导入</Button>,
+                            <Button key="clear" danger onClick={() => {
+                                if (importConfigModal.newConfig) {
+                                    setData([]);
+                                    setConfig(importConfigModal.newConfig);
+                                    setConfigFileName(importConfigModal.fileName || 'config.json');
+                                    message.success('数据已清空，配置文件已导入');
+                                } else {
+                                    message.error('配置文件导入失败');
+                                }
+                                setImportConfigModal({ open: false, newConfig: null, fileName: '' });
+                            }}>清空数据并导入</Button>
+                        ]}
+                        centered
+                    >
+                        导入新配置可能会影响数据显示，请选择操作：
+                    </Modal>
+                </div>
+            );
+        }
+
+        // 可编辑单元格
+        function EditableCell({ editing, dataIndex, title, record, children, onDoubleClick, editRow, setEditRow, editingCol, saveEdit, config, ...restProps }) {
+            // 判断是否有枚举筛选
+            const filters = (config[dataIndex + '_filters'] || []);
+            // 获取列配置
+            const colConf = (config.columns || []).find(col => col.dataIndex === dataIndex);
+            return (
+                <td {...restProps} onDoubleClick={onDoubleClick}>
+                    {editing && editingCol === dataIndex ? (
+                        filters.length > 0 ? (
+                            <Select
+                                value={editRow ? editRow[dataIndex] : undefined}
+                                style={{ width: '100%' }}
+                                onChange={val => setEditRow({ ...editRow, [dataIndex]: val })}
+                                autoFocus
+                            >
+                                {filters.map(opt => (
+                                    <Option key={opt.value} value={opt.value}>{opt.text}</Option>
+                                ))}
+                            </Select>
+                        ) : colConf && colConf.isDate ? (
+                            <DatePicker
+                                showTime={colConf.dateFormat && colConf.dateFormat.includes('HH:mm:ss')}
+                                format={colConf.dateFormat || 'YYYY-MM-DD HH:mm:ss'}
+                                value={editRow && editRow[dataIndex] ? dayjs(editRow[dataIndex]) : null}
+                                onChange={(date) => setEditRow({ ...editRow, [dataIndex]: date ? date.format(colConf.dateFormat || 'YYYY-MM-DD HH:mm:ss') : null })}
+                                autoFocus
+                            />
+                        ) : (
+                            (editRow && typeof editRow[dataIndex] === 'object' && editRow[dataIndex] !== null
+                                ? <Input.TextArea
+                                    rows={4}
+                                    value={JSON.stringify(editRow[dataIndex], null, 2)}
+                                    onChange={e => {
+                                        const val = e.target.value;
+                                        try {
+                                            const parsed = JSON.parse(val);
+                                            setEditRow({ ...editRow, [dataIndex]: parsed });
+                                        } catch {
+                                            setEditRow({ ...editRow, [dataIndex]: val });
+                                        }
+                                    }}
+                                    onPressEnter={saveEdit}
+                                    autoFocus
+                                />
+                                : (editRow && typeof editRow[dataIndex] === 'boolean'
+                                    ? <Select
+                                        value={editRow[dataIndex]}
+                                        style={{ width: '100%' }}
+                                        onChange={val => setEditRow({ ...editRow, [dataIndex]: val })}
+                                        autoFocus
+                                    >
+                                        <Option value={true}>true</Option>
+                                        <Option value={false}>false</Option>
+                                    </Select>
+                                    : <Input
+                                        value={editRow ? (editRow[dataIndex] === null || editRow[dataIndex] === undefined ? '' : editRow[dataIndex].toString()) : ''}
+                                        onChange={e => {
+                                            const val = e.target.value;
+                                            // 尝试转换为数字
+                                            if (!isNaN(val) && val !== '') {
+                                                setEditRow({ ...editRow, [dataIndex]: Number(val) });
+                                            } else {
+                                                setEditRow({ ...editRow, [dataIndex]: val });
+                                            }
+                                        }}
+                                        onPressEnter={saveEdit}
+                                        autoFocus
+                                    />
+                                )
+                            )
+                        )
+                    ) : children}
+                </td>
+            );
+        }
+        const { ConfigProvider } = antd;
+        const zhCN = antd.locales.zh_CN;
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(
+            <ConfigProvider locale={zhCN}>
+                <App />
+            </ConfigProvider>
+        );
+    </script>
+</body>
+
+</html>
