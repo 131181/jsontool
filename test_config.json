@@ -1,0 +1,274 @@
+{
+    "fieldEnum": [
+        {
+            "key": "columns",
+            "value": "表格列配置",
+            "type": "json"
+        },
+        {
+            "key": "status_filters",
+            "value": "产品状态筛选配置",
+            "type": "json"
+        },
+        {
+            "key": "category_filters",
+            "value": "产品分类筛选配置",
+            "type": "json"
+        },
+        {
+            "key": "pageSize",
+            "value": "每页显示条数配置",
+            "type": "number"
+        },
+        {
+            "key": "rowKey",
+            "value": "表格行key（default或字段名）",
+            "type": "string"
+        },
+        {
+            "key": "columnMinWidth",
+            "value": "列最小宽度（px）",
+            "type": "number"
+        },
+        {
+            "key": "cellMaxWidth",
+            "value": "单元格最大展示宽度（px，超出省略）",
+            "type": "number"
+        },
+        {
+            "key": "cellMaxLines",
+            "value": "单元格最多显示行数（多行省略）",
+            "type": "number"
+        },
+        {
+            "key": "opColumnWidth",
+            "value": "操作列宽度（px）",
+            "type": "number"
+        },
+        {
+            "key": "tooltipMaxHeight",
+            "value": "悬浮提示框最大高度（px）",
+            "type": "number"
+        }
+    ],
+    "columns": [
+        {
+            "title": "ID",
+            "dataIndex": "id",
+            "width": 60,
+            "editable": false,
+            "sortable": true,
+            "searchable": true,
+            "rulePattern": null,
+            "ruleEnum": null,
+            "ruleUnique": true,
+            "ruleMin": 1,
+            "ruleDateParsable": false
+        },
+        {
+            "title": "产品名称",
+            "dataIndex": "product_name",
+            "width": 200,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "rulePattern": "^.{1,100}$",
+            "ruleEnum": null,
+            "ruleUnique": false,
+            "ruleDateParsable": false
+        },
+        {
+            "title": "价格",
+            "dataIndex": "price",
+            "width": 120,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "rulePattern": "^\\d+(\\.\\d{1,2})?$",
+            "ruleEnum": null,
+            "ruleUnique": false,
+            "ruleMin": 0,
+            "ruleMax": 999999.99,
+            "ruleDateParsable": false
+        },
+        {
+            "title": "销量",
+            "dataIndex": "sales",
+            "width": 100,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "rulePattern": "^\\d+$",
+            "ruleEnum": null,
+            "ruleUnique": false,
+            "ruleMin": 0,
+            "ruleMax": 999999,
+            "ruleDateParsable": false
+        },
+        {
+            "title": "评分",
+            "dataIndex": "rating",
+            "width": 100,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "rulePattern": "^[1-5](\\.\\d{1,2})?$",
+            "ruleEnum": null,
+            "ruleUnique": false,
+            "ruleMin": 1,
+            "ruleMax": 5,
+            "ruleDateParsable": false
+        },
+        {
+            "title": "状态",
+            "dataIndex": "status",
+            "width": 120,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "rulePattern": "^(active|inactive|pending|discontinued)$",
+            "ruleEnum": [
+                "active",
+                "inactive",
+                "pending",
+                "discontinued"
+            ],
+            "ruleUnique": false,
+            "ruleDateParsable": false
+        },
+        {
+            "title": "分类",
+            "dataIndex": "category",
+            "width": 150,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "rulePattern": null,
+            "ruleEnum": [
+                "电子产品",
+                "服装",
+                "食品",
+                "图书",
+                "家居",
+                "运动",
+                "美妆",
+                "其他"
+            ],
+            "ruleUnique": false,
+            "ruleDateParsable": false
+        },
+        {
+            "title": "库存",
+            "dataIndex": "stock",
+            "width": 100,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "rulePattern": "^\\d+$",
+            "ruleEnum": null,
+            "ruleUnique": false,
+            "ruleMin": 0,
+            "ruleMax": 99999,
+            "ruleDateParsable": false
+        },
+        {
+            "title": "创建时间",
+            "dataIndex": "created_at",
+            "width": 180,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "isDate": true,
+            "dateFormat": "YYYY-MM-DD HH:mm:ss",
+            "rulePattern": null,
+            "ruleEnum": null,
+            "ruleUnique": false,
+            "ruleDateParsable": true
+        },
+        {
+            "title": "更新时间",
+            "dataIndex": "updated_at",
+            "width": 180,
+            "editable": true,
+            "sortable": true,
+            "searchable": true,
+            "isDate": true,
+            "dateFormat": "YYYY-MM-DD HH:mm:ss",
+            "rulePattern": null,
+            "ruleEnum": null,
+            "ruleUnique": false,
+            "ruleDateParsable": true
+        }
+    ],
+    "status_filters": [
+        {
+            "text": "活跃",
+            "value": "active",
+            "tagType": "success"
+        },
+        {
+            "text": "停用",
+            "value": "inactive",
+            "tagType": "default"
+        },
+        {
+            "text": "待审核",
+            "value": "pending",
+            "tagType": "warning"
+        },
+        {
+            "text": "已停产",
+            "value": "discontinued",
+            "tagType": "error"
+        }
+    ],
+    "category_filters": [
+        {
+            "text": "电子产品",
+            "value": "电子产品",
+            "tagType": "blue"
+        },
+        {
+            "text": "服装",
+            "value": "服装",
+            "tagType": "green"
+        },
+        {
+            "text": "食品",
+            "value": "食品",
+            "tagType": "orange"
+        },
+        {
+            "text": "图书",
+            "value": "图书",
+            "tagType": "purple"
+        },
+        {
+            "text": "家居",
+            "value": "家居",
+            "tagType": "cyan"
+        },
+        {
+            "text": "运动",
+            "value": "运动",
+            "tagType": "red"
+        },
+        {
+            "text": "美妆",
+            "value": "美妆",
+            "tagType": "magenta"
+        },
+        {
+            "text": "其他",
+            "value": "其他",
+            "tagType": "default"
+        }
+    ],
+    "pageSize": 20,
+    "rowKey": "id",
+    "columnMinWidth": 120,
+    "cellMaxWidth": 300,
+    "cellMaxLines": 2,
+    "opColumnWidth": 150,
+    "tooltipMaxHeight": 300
+}

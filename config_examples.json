@@ -1,0 +1,440 @@
+{
+    "description": "JSON数据管理工具设置典型例子",
+    "config_examples": [
+        {
+            "name": "基础配置示例",
+            "description": "包含配置项、字段规则、枚举筛选、页面设置的完整配置",
+            "config": {
+                "fieldEnum": [
+                    {
+                        "key": "columns",
+                        "value": "表格列配置",
+                        "type": "json"
+                    },
+                    {
+                        "key": "status_filters",
+                        "value": "用户状态筛选配置",
+                        "type": "json"
+                    },
+                    {
+                        "key": "pageSize",
+                        "value": "每页显示条数配置",
+                        "type": "number"
+                    },
+                    {
+                        "key": "rowKey",
+                        "value": "表格行key（default或字段名）",
+                        "type": "string"
+                    },
+                    {
+                        "key": "columnMinWidth",
+                        "value": "列最小宽度（px）",
+                        "type": "number"
+                    },
+                    {
+                        "key": "cellMaxWidth",
+                        "value": "单元格最大展示宽度（px，超出省略）",
+                        "type": "number"
+                    },
+                    {
+                        "key": "cellMaxLines",
+                        "value": "单元格最多显示行数（多行省略）",
+                        "type": "number"
+                    },
+                    {
+                        "key": "opColumnWidth",
+                        "value": "操作列宽度（px）",
+                        "type": "number"
+                    },
+                    {
+                        "key": "tooltipMaxHeight",
+                        "value": "悬浮提示框最大高度（px）",
+                        "type": "number"
+                    }
+                ],
+                "columns": [
+                    {
+                        "title": "用户状态",
+                        "dataIndex": "status",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^(active|inactive|pending|banned)$",
+                        "ruleEnum": [
+                            "active",
+                            "inactive",
+                            "pending",
+                            "banned"
+                        ],
+                        "ruleUnique": false,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "年龄",
+                        "dataIndex": "age",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": null,
+                        "ruleEnum": null,
+                        "ruleUnique": false,
+                        "ruleMin": 0,
+                        "ruleMax": 120,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "邮箱",
+                        "dataIndex": "email",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
+                        "ruleEnum": null,
+                        "ruleUnique": true,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "创建时间",
+                        "dataIndex": "created_at",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "isDate": true,
+                        "dateFormat": "YYYY-MM-DD HH:mm:ss",
+                        "rulePattern": null,
+                        "ruleEnum": null,
+                        "ruleUnique": false,
+                        "ruleDateParsable": true
+                    },
+                    {
+                        "title": "用户ID",
+                        "dataIndex": "user_id",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^[a-zA-Z0-9_-]+$",
+                        "ruleEnum": null,
+                        "ruleUnique": true,
+                        "ruleDateParsable": false
+                    }
+                ],
+                "status_filters": [
+                    {
+                        "text": "激活",
+                        "value": "active",
+                        "tagType": "success"
+                    },
+                    {
+                        "text": "停用",
+                        "value": "inactive",
+                        "tagType": "default"
+                    },
+                    {
+                        "text": "待审核",
+                        "value": "pending",
+                        "tagType": "warning"
+                    },
+                    {
+                        "text": "已封禁",
+                        "value": "banned",
+                        "tagType": "error"
+                    }
+                ],
+                "pageSize": 20,
+                "rowKey": "user_id",
+                "columnMinWidth": 150,
+                "cellMaxWidth": 280,
+                "cellMaxLines": 1,
+                "opColumnWidth": 120,
+                "tooltipMaxHeight": 300
+            }
+        },
+        {
+            "name": "电商订单配置示例",
+            "description": "订单管理系统的字段配置",
+            "config": {
+                "columns": [
+                    {
+                        "title": "订单号",
+                        "dataIndex": "order_id",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^ORD\\d{8}$",
+                        "ruleEnum": null,
+                        "ruleUnique": true,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "订单状态",
+                        "dataIndex": "order_status",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^(pending|paid|shipped|delivered|cancelled)$",
+                        "ruleEnum": [
+                            "pending",
+                            "paid",
+                            "shipped",
+                            "delivered",
+                            "cancelled"
+                        ],
+                        "ruleUnique": false,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "订单金额",
+                        "dataIndex": "amount",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^\\d+(\\.\\d{1,2})?$",
+                        "ruleEnum": null,
+                        "ruleUnique": false,
+                        "ruleMin": 0.01,
+                        "ruleMax": 999999.99,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "下单时间",
+                        "dataIndex": "order_time",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "isDate": true,
+                        "dateFormat": "YYYY-MM-DD HH:mm:ss",
+                        "rulePattern": null,
+                        "ruleEnum": null,
+                        "ruleUnique": false,
+                        "ruleDateParsable": true
+                    },
+                    {
+                        "title": "手机号",
+                        "dataIndex": "phone",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^1[3-9]\\d{9}$",
+                        "ruleEnum": null,
+                        "ruleUnique": false,
+                        "ruleDateParsable": false
+                    }
+                ],
+                "order_status_filters": [
+                    {
+                        "text": "待支付",
+                        "value": "pending",
+                        "tagType": "warning"
+                    },
+                    {
+                        "text": "已支付",
+                        "value": "paid",
+                        "tagType": "processing"
+                    },
+                    {
+                        "text": "已发货",
+                        "value": "shipped",
+                        "tagType": "success"
+                    },
+                    {
+                        "text": "已送达",
+                        "value": "delivered",
+                        "tagType": "success"
+                    },
+                    {
+                        "text": "已取消",
+                        "value": "cancelled",
+                        "tagType": "error"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "员工信息配置示例",
+            "description": "人力资源系统的员工信息管理",
+            "config": {
+                "columns": [
+                    {
+                        "title": "员工编号",
+                        "dataIndex": "emp_id",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^EMP\\d{6}$",
+                        "ruleEnum": null,
+                        "ruleUnique": true,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "部门",
+                        "dataIndex": "department",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": null,
+                        "ruleEnum": [
+                            "技术部",
+                            "销售部",
+                            "人事部",
+                            "财务部",
+                            "市场部"
+                        ],
+                        "ruleUnique": false,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "入职时间",
+                        "dataIndex": "hire_date",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "isDate": true,
+                        "dateFormat": "YYYY-MM-DD",
+                        "rulePattern": null,
+                        "ruleEnum": null,
+                        "ruleUnique": false,
+                        "ruleDateParsable": true
+                    },
+                    {
+                        "title": "薪资",
+                        "dataIndex": "salary",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^\\d+$",
+                        "ruleEnum": null,
+                        "ruleUnique": false,
+                        "ruleMin": 3000,
+                        "ruleMax": 100000,
+                        "ruleDateParsable": false
+                    },
+                    {
+                        "title": "身份证号",
+                        "dataIndex": "id_card",
+                        "editable": true,
+                        "sortable": true,
+                        "searchable": true,
+                        "rulePattern": "^[1-9]\\d{5}(18|19|20)\\d{2}((0[1-9])|(1[0-2]))(([0-2][1-9])|10|20|30|31)\\d{3}[0-9Xx]$",
+                        "ruleEnum": null,
+                        "ruleUnique": true,
+                        "ruleDateParsable": false
+                    }
+                ],
+                "department_filters": [
+                    {
+                        "text": "技术部",
+                        "value": "技术部",
+                        "tagType": "blue"
+                    },
+                    {
+                        "text": "销售部",
+                        "value": "销售部",
+                        "tagType": "green"
+                    },
+                    {
+                        "text": "人事部",
+                        "value": "人事部",
+                        "tagType": "purple"
+                    },
+                    {
+                        "text": "财务部",
+                        "value": "财务部",
+                        "tagType": "orange"
+                    },
+                    {
+                        "text": "市场部",
+                        "value": "市场部",
+                        "tagType": "cyan"
+                    }
+                ]
+            }
+        }
+    ],
+    "field_properties_explanation": {
+        "基础属性": {
+            "title": "字段显示名称",
+            "dataIndex": "字段数据键名",
+            "editable": "是否可编辑 (true/false)",
+            "sortable": "是否可排序 (true/false)",
+            "searchable": "是否可搜索 (true/false)"
+        },
+        "日期属性": {
+            "isDate": "是否为日期字段 (true/false)",
+            "dateFormat": "日期格式，如 'YYYY-MM-DD HH:mm:ss'"
+        },
+        "规则验证属性": {
+            "rulePattern": "正则表达式验证规则",
+            "ruleEnum": "枚举值数组，限制字段值范围",
+            "ruleUnique": "是否要求唯一性 (true/false)",
+            "ruleMin": "最小值限制（数字）",
+            "ruleMax": "最大值限制（数字）",
+            "ruleDateParsable": "是否验证日期可解析 (true/false)"
+        },
+        "筛选配置": {
+            "fieldName_filters": "字段筛选配置数组",
+            "text": "显示文本",
+            "value": "实际值",
+            "tagType": "标签颜色类型"
+        }
+    },
+    "tagType_values": {
+        "description": "Ant Design标签类型可选值",
+        "preset_colors": [
+            "default",
+            "success",
+            "processing",
+            "error",
+            "warning"
+        ],
+        "custom_colors": [
+            "red",
+            "green",
+            "blue",
+            "yellow",
+            "purple"
+        ],
+        "hex_colors": {
+            "description": "支持十六进制颜色值",
+            "examples": [
+                "#1890ff",
+                "#52c41a",
+                "#faad14",
+                "#ff4d4f",
+                "#722ed1"
+            ]
+        }
+    },
+    "date_formats": {
+        "description": "支持的日期格式",
+        "formats": [
+            "YYYY-MM-DD",
+            "YYYY-MM-DD HH:mm:ss",
+            "YYYY/MM/DD",
+            "YYYY/MM/DD HH:mm:ss",
+            "MM/DD/YYYY",
+            "DD/MM/YYYY"
+        ]
+    },
+    "regex_patterns": {
+        "description": "常用正则表达式模式",
+        "patterns": {
+            "email": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
+            "phone": "^1[3-9]\\d{9}$",
+            "id_card": "^[1-9]\\d{5}(18|19|20)\\d{2}((0[1-9])|(1[0-2]))(([0-2][1-9])|10|20|30|31)\\d{3}[0-9Xx]$",
+            "postal_code": "^[1-9]\\d{5}$",
+            "url": "^(https?:\\/\\/)?([\\da-z\\.-]+)\\.([a-z\\.]{2,6})([\\/\\w \\.-]*)*\\/?$",
+            "number_with_decimal": "^\\d+(\\.\\d{1,2})?$",
+            "alphanumeric": "^[a-zA-Z0-9_-]+$"
+        }
+    },
+    "usage_tips": {
+        "1": "ruleEnum数组与对应的fieldName_filters数组的value值应该一致",
+        "2": "tagType支持预设颜色、基础颜色和十六进制颜色值",
+        "3": "rulePattern使用JavaScript正则表达式语法",
+        "4": "ruleMin/ruleMax用于数值范围验证",
+        "5": "ruleUnique=true会检查整个数据集中的重复值",
+        "6": "ruleDateParsable=true会验证日期格式是否正确",
+        "7": "isDate=true的字段会自动进行日期解析和格式化",
+        "8": "fieldName_filters用于表格筛选和枚举分布统计"
+    }
+}

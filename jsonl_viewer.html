@@ -119,15 +119,205 @@
     <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/dayjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/locale/zh-cn.js"></script>
+    <script src="https://unpkg.com/dayjs@1.11.13/plugin/customParseFormat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/antd@5.27.2/dist/antd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/antd@5.27.2/dist/antd-with-locales.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/echarts@5.4.3/dist/echarts.min.js"></script>
     <script type="text/babel">
-        const { useState, useEffect } = React;
-        const { Table, Input, Button, Modal, Form, Select, Space, Popconfirm, message, Upload, Drawer, Tag, Typography, DatePicker } = antd;
+        const { useState, useEffect, useRef } = React;
+        const { Table, Input, Button, Modal, Form, Select, Space, Popconfirm, message, Upload, Drawer, Tag, Typography, DatePicker, Statistic, Row, Col, Card, Tooltip } = antd;
         const { RangePicker } = DatePicker;
-        if (typeof dayjs !== 'undefined') { dayjs.locale('zh-cn'); }
+        if (typeof dayjs !== 'undefined') {
+            dayjs.locale('zh-cn');
+            if (typeof dayjs_plugin_customParseFormat !== 'undefined') {
+                dayjs.extend(dayjs_plugin_customParseFormat);
+            }
+        }
         const { Option } = Select;
+        // 统一颜色映射（表格 Tag 与图表共享）
+        const COLOR_MAP = {
+            red: '#ff4d4f',
+            green: '#52c41a',
+            blue: '#1677ff',
+            volcano: '#fa541c',
+            geekblue: '#2f54eb',
+            orange: '#fa8c16',
+            gold: '#faad14',
+            cyan: '#13c2c2',
+            magenta: '#eb2f96',
+            purple: '#722ed1',
+            lime: '#a0d911'
+        };
+        // 常见日期格式集合
+        const COMMON_DATE_FORMATS = ['YYYY-MM-DD HH:mm:ss', 'YYYY/MM/DD HH:mm:ss', 'YYYY-MM-DD', 'YYYY/MM/DD'];
+        const DEFAULT_DATE_FORMAT = 'YYYY-MM-DD HH:mm:ss';
+        const PIE_FALLBACK_COLORS = ['#ff6384', '#36a2eb', '#ffce56', '#4bc0c0', '#9966ff', '#ff9f40'];
+        // Web Worker 源码（集中定义，便于维护）
+        const WORKER_CODE = `
+            self.onmessage = function(e){
+            const { data, filtersMap, columns, trendField, granularity } = e.data || {};
+            const enumDistribution = {};
+            const fieldStats = {};
+            const numericStats = {};
+            const timeRange = {};
+            const trends = {};
+            try {
+                if (filtersMap && data && Array.isArray(data)){
+                Object.keys(filtersMap).forEach(field => {
+                    const values = filtersMap[field] || [];
+                    const dist = {};
+                    values.forEach(v => { dist[v] = 0; });
+                    for (let i=0;i<data.length;i++){
+                    const row = data[i];
+                    const val = row ? row[field] : undefined;
+                    if (Object.prototype.hasOwnProperty.call(dist, val)) dist[val]++;
+                    }
+                    enumDistribution[field] = dist;
+                });
+                }
+                if (columns && Array.isArray(columns)){
+                    // 优化：批量计算字段统计，减少重复遍历
+                    const fieldValuesMap = new Map();
+                    columns.forEach(col => {
+                        const fieldName = col.dataIndex;
+                        const values = [];
+                        let nullCount = 0;
+
+                        for (let i = 0; i < data.length; i++) {
+                            const value = data[i][fieldName];
+                            if (value !== null && value !== undefined) {
+                                values.push(value);
+                            } else {
+                                nullCount++;
+                            }
+                        }
+
+                        fieldValuesMap.set(fieldName, { values, nullCount, col });
+                    });
+
+                    // 批量计算统计信息
+                    fieldValuesMap.forEach(({ values, nullCount, col }, fieldName) => {
+                        if (!fieldStats[fieldName]){
+                            // 优化：缓存类型推断结果
+                            const sample = values[0];
+                            let inferredType = 'unknown';
+
+                            if (sample !== undefined) {
+                                if (col.isDate) inferredType = 'date';
+                                else if (Array.isArray(sample)) inferredType = 'array';
+                                else if (typeof sample === 'object') inferredType = 'object';
+                                else if (typeof sample === 'boolean') inferredType = 'boolean';
+                                else if (typeof sample === 'number') inferredType = 'number';
+                                else if (typeof sample === 'string') {
+                                    const numLike = /^-?\\d+(?:\\.\\d+)?$/.test(sample.trim());
+                                    if (numLike) inferredType = 'number-like';
+                                    else {
+                                        const maybeDate = new Date(sample);
+                                        inferredType = (!isNaN(maybeDate.getTime())) ? 'date-like' : 'string';
+                                    }
+                                }
+                            }
+
+                            // 优化：使用 Map 计算唯一值，避免重复创建 Set
+                            const uniqueSet = new Set(values);
+
+                            fieldStats[fieldName] = {
+                                total: values.length,
+                                nullCount: nullCount,
+                                uniqueCount: uniqueSet.size,
+                                type: inferredType
+                            };
+                        } else {
+                            // 仅更新计数信息
+                            fieldStats[fieldName].total = values.length;
+                            fieldStats[fieldName].nullCount = nullCount;
+                        }
+
+                        // 数值字段统计优化
+                        if (values.length > 0 && typeof values[0] === 'number'){
+                            const numericValues = values.filter(v => !isNaN(v));
+                            if (numericValues.length > 0){
+                                const sorted = numericValues.slice().sort((a,b) => a-b);
+                                const mean = numericValues.reduce((sum, val) => sum + val, 0) / numericValues.length;
+                                const median = sorted.length % 2 === 0 ? (sorted[sorted.length/2-1] + sorted[sorted.length/2]) / 2 : sorted[Math.floor(sorted.length/2)];
+                                const variance = numericValues.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / numericValues.length;
+                                const stdDev = Math.sqrt(variance);
+
+                                numericStats[fieldName] = {
+                                    title: col.title || fieldName,
+                                    count: numericValues.length,
+                                    mean: parseFloat(mean.toFixed(2)),
+                                    median: parseFloat(median.toFixed(2)),
+                                    min: Math.min(...numericValues),
+                                    max: Math.max(...numericValues),
+                                    stdDev: parseFloat(stdDev.toFixed(2)),
+                                    q25: sorted[Math.floor(sorted.length * 0.25)],
+                                    q75: sorted[Math.floor(sorted.length * 0.75)],
+                                    range: Math.max(...numericValues) - Math.min(...numericValues)
+                                };
+                            }
+                        }
+                    });
+                }
+                if (trendField && granularity && Array.isArray(data)){
+                const dates = [];
+                for (let i=0;i<data.length;i++){
+                    const v = data[i] && data[i][trendField];
+                    const ts = typeof v === 'number' ? v : Date.parse(v);
+                    if (!isNaN(ts)) dates.push(new Date(ts));
+                }
+                if (dates.length > 0){
+                    function bucketKey(d){
+                    if (granularity === 'day'){
+                        return d.getFullYear()+ '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+                    } else if (granularity === 'week'){
+                        const day = d.getDay();
+                        const monday = new Date(d);
+                        monday.setDate(d.getDate() - ((day + 6) % 7));
+                        return monday.getFullYear()+ '-' + String(monday.getMonth()+1).padStart(2,'0') + '-' + String(monday.getDate()).padStart(2,'0');
+                    } else {
+                        return d.getFullYear()+ '-' + String(d.getMonth()+1).padStart(2,'0');
+                    }
+                    }
+                    const buckets = {};
+                    dates.forEach(d => { const k = bucketKey(d); buckets[k] = (buckets[k] || 0) + 1; });
+                    const labels = Object.keys(buckets).sort();
+                    const values = labels.map(k => buckets[k]);
+                    trends.labels = labels; trends.values = values; trends.field = trendField; trends.granularity = granularity;
+                }
+                }
+            } catch {}
+            self.postMessage({ enumDistribution, fieldStats, numericStats, timeRange, trends });
+            };
+        `;
+        // 简单防抖封装
+        function debounceRender(timerRef, fn, delay) {
+            if (timerRef.current) clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(fn, delay);
+        }
+        // 辅助函数：列/标题/枚举文本与颜色
+        function getColumnTitle(columnMap, dataIndex) {
+            const col = columnMap[dataIndex];
+            return col ? (col.title || dataIndex) : dataIndex;
+        }
+        function getEnumList(enumFiltersMap, field) {
+            return enumFiltersMap[field] || [];
+        }
+        function getEnumDisplayText(enumFiltersMap, field, value) {
+            const list = getEnumList(enumFiltersMap, field);
+            const f = list.find(x => String(x.value) === String(value));
+            return f ? f.text : String(value);
+        }
+        function getEnumColor(enumFiltersMap, field, value) {
+            const list = getEnumList(enumFiltersMap, field);
+            const f = list.find(x => String(x.value) === String(value));
+            if (!f || !f.tagType) return undefined;
+            const t = String(f.tagType).trim();
+            if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(t)) return t;
+            if (COLOR_MAP[t]) return COLOR_MAP[t];
+            return undefined;
+        }
         // 直接 DOM 级别的全局覆盖层，确保在主线程繁忙前即可显示
         const overlayId = 'global-loading-overlay';
         function showGlobalOverlay() {
@@ -249,8 +439,10 @@
             const [editMode, setEditMode] = useState(null);
             const [tableHeight, setTableHeight] = useState(500);
             const [tablePageSize, setTablePageSize] = useState(defaultConfig.pageSize || 20);
+            const [tableCurrentPage, setTableCurrentPage] = useState(1);
             const [isPending, startTransition] = React.useTransition();
             const pageSizeChangingRef = React.useRef(false);
+            const pageChangingRef = React.useRef(false);
             const [editingCol, setEditingCol] = useState('');
             const toolbarRef = React.useRef(null);
             // 设置抽屉中 JSON 字段的临时草稿，允许中间态为无效 JSON
@@ -261,6 +453,37 @@
             const [confirmCloseVisible, setConfirmCloseVisible] = useState(false);
             const [resetConfigModal, setResetConfigModal] = useState(false);
             const [importConfigModal, setImportConfigModal] = useState({ open: false, newConfig: null, fileName: '' });
+            const [statsDrawer, setStatsDrawer] = useState(false);
+            const [statsData, setStatsData] = useState({});
+            const [selectedEnumField, setSelectedEnumField] = useState('');
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+            const trendChartRef = useRef(null);
+            const trendChartInstance = useRef(null);
+            const pieRenderTimerRef = useRef(null);
+            const lastPieSigRef = useRef('');
+            const trendRenderTimerRef = useRef(null);
+            const [selectedTrendField, setSelectedTrendField] = useState('');
+            const [trendGranularity, setTrendGranularity] = useState('day'); // day|week|month
+            const statsWorkerRef = useRef(null);
+            const [useWorker, setUseWorker] = useState(true);
+            const workerUrlRef = useRef(null);
+
+            // 列与枚举过滤映射，避免频繁 find 与属性访问
+            const columnMap = React.useMemo(() => {
+                const map = {};
+                (config.columns || []).forEach(c => { if (c && c.dataIndex) map[c.dataIndex] = c; });
+                return map;
+            }, [config.columns]);
+            const enumFiltersMap = React.useMemo(() => {
+                const map = {};
+                Object.keys(config || {}).forEach(k => {
+                    if (k.endsWith('_filters') && Array.isArray(config[k])) {
+                        map[k.replace('_filters', '')] = config[k];
+                    }
+                });
+                return map;
+            }, [config]);
 
             useEffect(() => {
                 function updateHeight() {
@@ -277,15 +500,686 @@
                 if (config && typeof config.pageSize === 'number' && config.pageSize > 0) {
                     setTablePageSize(config.pageSize);
                 }
-            }, [config && config.pageSize]);
+            }, [config?.pageSize]);
 
             // 过渡结束后，关闭全局提示并解锁
             useEffect(() => {
-                if (!isPending && pageSizeChangingRef.current) {
+                if (!isPending && (pageSizeChangingRef.current || pageChangingRef.current)) {
                     pageSizeChangingRef.current = false;
+                    pageChangingRef.current = false;
                     hideGlobalOverlay();
                 }
             }, [isPending]);
+
+            // 计算统计数据
+            // 简易签名与缓存，避免重复计算
+            const lastStatsCacheRef = useRef({ sig: '', stats: null });
+            function simpleHashString(str) {
+                let h = 0;
+                for (let i = 0; i < str.length; i += Math.ceil(str.length / 1024) || 1) {
+                    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+                }
+                return h.toString(36);
+            }
+            function computeSignature(dataArr, cfg, trendField, gran) {
+                const len = dataArr.length;
+                // 只取前后各5条进行签名，平衡成本与准确性
+                const head = dataArr.slice(0, 5);
+                const tail = dataArr.slice(-5);
+                const cfgPick = {
+                    columns: (cfg.columns || []).map(c => ({ k: c.dataIndex, t: c.title, d: c.isDate })),
+                };
+                // 追加所有 *_filters 的键名与长度
+                Object.keys(cfg).filter(k => k.endsWith('_filters')).sort().forEach(k => {
+                    cfgPick[k] = Array.isArray(cfg[k]) ? cfg[k].length : 0;
+                });
+                const str = JSON.stringify({ len, head, tail, cfgPick, trendField, gran });
+                return simpleHashString(str);
+            }
+            function getCachedOrComputeStats(dataArr, trendField, granularity, totalCountOverride) {
+                const sig = computeSignature(dataArr, config, trendField, granularity) + ':' + (totalCountOverride ?? '');
+                if (lastStatsCacheRef.current.sig === sig && lastStatsCacheRef.current.stats) {
+                    return lastStatsCacheRef.current.stats;
+                }
+                const stats = calculateStats(dataArr, trendField, granularity, totalCountOverride);
+                lastStatsCacheRef.current = { sig, stats };
+                return stats;
+            }
+
+            function ensureStatsWorker() {
+                if (statsWorkerRef.current) return statsWorkerRef.current;
+                const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
+                const url = URL.createObjectURL(blob);
+                workerUrlRef.current = url;
+                statsWorkerRef.current = new Worker(url);
+                return statsWorkerRef.current;
+            }
+            const calculateStats = (data, trendField = '', granularity = 'day', totalCountOverride = null, overrides = null) => {
+                const stats = {
+                    total: totalCountOverride != null ? totalCountOverride : data.length,
+                    enumDistribution: {},
+                    timeRange: {},
+                    fieldStats: {},
+                    numericStats: {},
+                    dataQuality: {},
+                    trends: {},
+                    ruleViolations: {}
+                };
+
+                if (data.length === 0) return stats;
+
+                // 统计枚举分布（支持覆盖）
+                if (overrides && overrides.enumDistribution) {
+                    stats.enumDistribution = overrides.enumDistribution;
+                } else {
+                    Object.keys(config).forEach(key => {
+                        if (key.endsWith('_filters') && Array.isArray(config[key])) {
+                            const fieldName = key.replace('_filters', '');
+                            const distribution = {};
+                            config[key].forEach(opt => { distribution[opt.value] = 0; });
+                            data.forEach(row => {
+                                const value = row[fieldName];
+                                if (Object.prototype.hasOwnProperty.call(distribution, value)) distribution[value]++;
+                            });
+                            stats.enumDistribution[fieldName] = distribution;
+                        }
+                    });
+                }
+
+                // 统计时间范围
+                const timeFields = (config.columns || []).filter(col => col.isDate);
+                if (overrides && overrides.timeRange) {
+                    stats.timeRange = overrides.timeRange;
+                } else if (timeFields.length > 0) {
+                    stats.timeRange = {};
+                    timeFields.forEach(field => {
+                        const fieldTimes = [];
+                        data.forEach(row => {
+                            const timeValue = row[field.dataIndex];
+                            if (timeValue) {
+                                const time = parseDateByFormats(timeValue, field);
+                                if (time && time.isValid()) {
+                                    fieldTimes.push(time.valueOf());
+                                }
+                            }
+                        });
+                        if (fieldTimes.length > 0) {
+                            stats.timeRange[field.dataIndex] = {
+                                title: field.title || field.dataIndex,
+                                min: new Date(Math.min(...fieldTimes)),
+                                max: new Date(Math.max(...fieldTimes)),
+                                count: fieldTimes.length
+                            };
+                        }
+                    });
+                }
+
+                // 统计字段信息 - 优化版本
+                const fieldStats = overrides && overrides.fieldStats ? { ...overrides.fieldStats } : {};
+                const numericStats = overrides && overrides.numericStats ? { ...overrides.numericStats } : {};
+                const ruleViolations = {};
+                const dataQuality = {
+                    completeness: 0,
+                    consistency: 0,
+                    totalFields: 0,
+                    ruleCoverage: 0,
+                    topMissing: [],
+                    ruleTypeRates: { enum: null, range: null, regex: null, dateParsable: null, unique: null },
+                    uniquenessHotspots: [],
+                    enumCoverage: [],
+                    dateParsableRates: [],
+                    dateFreshness: [],
+                    numericOutlierRates: []
+                };
+
+                // 优化：批量计算字段统计，减少重复遍历
+                const columns = config.columns || [];
+                const fieldStatsMap = new Map();
+
+                // 一次性提取所有字段值，避免重复遍历
+                const fieldValuesMap = new Map();
+                columns.forEach(col => {
+                    const fieldName = col.dataIndex;
+                    const values = [];
+                    let nullCount = 0;
+
+                    for (let i = 0; i < data.length; i++) {
+                        const value = data[i][fieldName];
+                        if (value !== null && value !== undefined) {
+                            values.push(value);
+                        } else {
+                            nullCount++;
+                        }
+                    }
+
+                    fieldValuesMap.set(fieldName, { values, nullCount, col });
+                });
+
+                // 批量计算统计信息
+                fieldValuesMap.forEach(({ values, nullCount, col }, fieldName) => {
+                    if (!fieldStats[fieldName]) {
+                        // 优化：缓存类型推断结果
+                        const sample = values[0];
+                        let inferredType = 'unknown';
+
+                        if (sample !== undefined) {
+                            if (col.isDate) inferredType = 'date';
+                            else if (Array.isArray(sample)) inferredType = 'array';
+                            else if (typeof sample === 'object') inferredType = 'object';
+                            else if (typeof sample === 'boolean') inferredType = 'boolean';
+                            else if (typeof sample === 'number') inferredType = 'number';
+                            else if (typeof sample === 'string') {
+                                const numLike = /^-?\d+(?:\.\d+)?$/.test(sample.trim());
+                                if (numLike) inferredType = 'number-like';
+                                else {
+                                    const maybeDate = parseDateByFormats(sample, col);
+                                    inferredType = (maybeDate && maybeDate.isValid()) ? 'date-like' : 'string';
+                                }
+                            }
+                        }
+
+                        // 优化：使用 Map 计算唯一值，避免重复创建 Set
+                        const uniqueSet = new Set(values);
+
+                        fieldStats[fieldName] = {
+                            total: values.length,
+                            nullCount: nullCount,
+                            uniqueCount: uniqueSet.size,
+                            type: inferredType
+                        };
+                    } else {
+                        // 仅更新计数信息
+                        fieldStats[fieldName].nullCount = nullCount;
+                        fieldStats[fieldName].total = values.length;
+                    }
+
+                    // 规则一致性校验（可选配置）
+                    // 支持：rulePattern(RegExp字符串)，ruleMin，ruleMax，ruleEnum(数组)，ruleUnique(布尔)，ruleDateParsable(布尔)
+                    let fieldRules = { pass: 0, fail: 0 };
+                    let perType = { enum: { tested: 0, pass: 0 }, range: { tested: 0, pass: 0 }, regex: { tested: 0, pass: 0 }, dateParsable: { tested: 0, pass: 0 }, unique: { tested: 0, pass: 0 } };
+                    const hasRules = col.rulePattern || col.ruleMin !== undefined || col.ruleMax !== undefined || Array.isArray(col.ruleEnum) || col.ruleUnique || col.ruleDateParsable;
+                    if (hasRules && data.length > 0) {
+                        const uniqueSet = new Set();
+                        const regex = col.rulePattern ? new RegExp(col.rulePattern) : null;
+                        values.forEach((val) => {
+                            let ok = true;
+                            if (regex && typeof val === 'string') { perType.regex.tested++; const pass = regex.test(val); if (pass) perType.regex.pass++; ok = ok && pass; }
+                            if (col.ruleMin !== undefined && typeof val === 'number') { perType.range.tested++; const pass = val >= col.ruleMin; if (pass) perType.range.pass++; ok = ok && pass; }
+                            if (col.ruleMax !== undefined && typeof val === 'number') { perType.range.tested++; const pass = val <= col.ruleMax; if (pass) perType.range.pass++; ok = ok && pass; }
+                            if (Array.isArray(col.ruleEnum)) { perType.enum.tested++; const pass = col.ruleEnum.includes(val); if (pass) perType.enum.pass++; ok = ok && pass; }
+                            if (col.ruleDateParsable) { perType.dateParsable.tested++; const pass = dayjs(val).isValid(); if (pass) perType.dateParsable.pass++; ok = ok && pass; }
+                            if (!ok) {
+                                fieldRules.fail++;
+                            } else {
+                                fieldRules.pass++;
+                            }
+                            if (col.ruleUnique) {
+                                perType.unique.tested++;
+                                if (uniqueSet.has(val)) { fieldRules.fail++; } else { perType.unique.pass++; uniqueSet.add(val); }
+                            }
+                        });
+                        ruleViolations[fieldName] = {
+                            title: col.title || fieldName,
+                            pass: fieldRules.pass,
+                            fail: fieldRules.fail,
+                            ruleApplied: true
+                        };
+                        ['enum', 'range', 'regex', 'dateParsable', 'unique'].forEach(t => {
+                            const rt = perType[t];
+                            if (rt.tested > 0) {
+                                if (!dataQuality.ruleTypeRates[t]) dataQuality.ruleTypeRates[t] = 0;
+                                dataQuality.ruleTypeRates[t] = { tested: (dataQuality.ruleTypeRates[t].tested || 0) + rt.tested, pass: (dataQuality.ruleTypeRates[t].pass || 0) + rt.pass };
+                            }
+                        });
+                        const dupCount = (perType.unique.tested || 0) - (perType.unique.pass || 0);
+                        if (dupCount > 0) {
+                            dataQuality.uniquenessHotspots.push({ field: fieldName, title: col.title || fieldName, duplicateCount: dupCount });
+                        }
+                    }
+
+                    // 数值字段统计
+                    if (values.length > 0 && typeof values[0] === 'number') {
+                        const numericValues = values.filter(v => !isNaN(v));
+                        if (numericValues.length > 0) {
+                            const sorted = numericValues.sort((a, b) => a - b);
+                            const mean = numericValues.reduce((sum, val) => sum + val, 0) / numericValues.length;
+                            const median = sorted.length % 2 === 0
+                                ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+                                : sorted[Math.floor(sorted.length / 2)];
+
+                            // 计算标准差
+                            const variance = numericValues.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / numericValues.length;
+                            const stdDev = Math.sqrt(variance);
+
+                            numericStats[fieldName] = {
+                                title: col.title || fieldName,
+                                count: numericValues.length,
+                                mean: parseFloat(mean.toFixed(2)),
+                                median: parseFloat(median.toFixed(2)),
+                                min: Math.min(...numericValues),
+                                max: Math.max(...numericValues),
+                                stdDev: parseFloat(stdDev.toFixed(2)),
+                                q25: sorted[Math.floor(sorted.length * 0.25)],
+                                q75: sorted[Math.floor(sorted.length * 0.75)],
+                                range: Math.max(...numericValues) - Math.min(...numericValues)
+                            };
+                        }
+                    }
+                });
+
+                stats.fieldStats = fieldStats;
+                stats.numericStats = numericStats;
+                stats.ruleViolations = ruleViolations;
+
+                // 数据质量评估
+                const totalFields = columns.length;
+                const completenessScores = Object.entries(fieldStats).map(([name, field]) => {
+                    return field.total / data.length;
+                });
+                dataQuality.completeness = completenessScores.length > 0
+                    ? parseFloat((completenessScores.reduce((sum, score) => sum + score, 0) / completenessScores.length * 100).toFixed(1))
+                    : 0;
+                // 一致性：按有规则的字段通过率平均
+                const ruleEntries = Object.values(ruleViolations).filter(r => r.ruleApplied);
+                if (ruleEntries.length > 0) {
+                    const avgPassRate = ruleEntries.reduce((acc, r) => acc + (r.pass + r.fail > 0 ? (r.pass / (r.pass + r.fail)) : 1), 0) / ruleEntries.length;
+                    dataQuality.consistency = parseFloat((avgPassRate * 100).toFixed(1));
+                }
+                // 规则覆盖率（有规则字段 / 总字段）
+                const withRulesCount = columns.filter(c => c && (c.rulePattern || c.ruleMin !== undefined || c.ruleMax !== undefined || Array.isArray(c.ruleEnum) || c.ruleUnique || c.ruleDateParsable)).length;
+                dataQuality.ruleCoverage = columns.length > 0 ? Math.round(withRulesCount / columns.length * 100) : 0;
+                // 缺失最严重的Top-5字段（按非空率升序）
+                const topMissing = Object.entries(fieldStats)
+                    .map(([k, v]) => ({ key: k, title: columns.find(c => c.dataIndex === k)?.title || k, nonNullRate: data.length > 0 ? (v.total / data.length) : 0 }))
+                    .filter(it => (it.nonNullRate || 0) < 1) // 仅保留存在缺失（非空率<100%）的字段
+                    .sort((a, b) => a.nonNullRate - b.nonNullRate)
+                    .slice(0, 5);
+                dataQuality.topMissing = topMissing;
+                dataQuality.totalFields = totalFields;
+                // 规则类型合规率聚合
+                Object.keys(dataQuality.ruleTypeRates || {}).forEach(t => {
+                    const v = dataQuality.ruleTypeRates[t];
+                    if (v && typeof v === 'object' && v.tested) dataQuality.ruleTypeRates[t] = parseFloat(((v.pass / v.tested) * 100).toFixed(1));
+                    else dataQuality.ruleTypeRates[t] = null;
+                });
+                // 枚举合法值覆盖率
+                Object.keys(enumFiltersMap || {}).forEach(f => {
+                    const allowed = new Set((enumFiltersMap[f] || []).map(o => o.value));
+                    let tested = 0, ok = 0;
+                    data.forEach(row => { if (Object.prototype.hasOwnProperty.call(row, f)) { tested++; if (allowed.has(row[f])) ok++; } });
+                    if (tested > 0) dataQuality.enumCoverage.push({ field: f, title: columns.find(c => c.dataIndex === f)?.title || f, coverage: parseFloat(((ok / tested) * 100).toFixed(1)) });
+                });
+                // 日期可解析率与新鲜度
+                columns.filter(c => c.isDate).forEach(c => {
+                    let tested = 0, ok = 0, last7 = 0, last30 = 0;
+                    const now = Date.now();
+                    data.forEach(row => {
+                        const d = parseDateByFormats(row[c.dataIndex], c);
+                        if (Object.prototype.hasOwnProperty.call(row, c.dataIndex)) tested++;
+                        if (d && d.isValid()) {
+                            ok++;
+                            const ts = d.valueOf();
+                            if (ts >= now - 7 * 24 * 3600 * 1000) last7++;
+                            if (ts >= now - 30 * 24 * 3600 * 1000) last30++;
+                        }
+                    });
+                    if (tested > 0) {
+                        dataQuality.dateParsableRates.push({ field: c.dataIndex, title: c.title || c.dataIndex, rate: parseFloat(((ok / tested) * 100).toFixed(1)) });
+                        dataQuality.dateFreshness.push({ field: c.dataIndex, title: c.title || c.dataIndex, last7: tested ? Math.round((last7 / tested) * 100) : 0, last30: tested ? Math.round((last30 / tested) * 100) : 0 });
+                    }
+                });
+                // 数值异常值比例（IQR）
+                columns.forEach(c => {
+                    const vals = data.map(r => r[c.dataIndex]).filter(v => typeof v === 'number');
+                    if (vals.length < 5) return;
+                    const sortedNums = vals.slice().sort((a, b) => a - b);
+                    const q1 = sortedNums[Math.floor(sortedNums.length * 0.25)];
+                    const q3 = sortedNums[Math.floor(sortedNums.length * 0.75)];
+                    const iqr = q3 - q1;
+                    const low = q1 - 1.5 * iqr;
+                    const high = q3 + 1.5 * iqr;
+                    const out = sortedNums.filter(v => v < low || v > high).length;
+                    const rate = parseFloat(((out / sortedNums.length) * 100).toFixed(1));
+                    if (!isNaN(rate)) dataQuality.numericOutlierRates.push({ field: c.dataIndex, title: c.title || c.dataIndex, rate });
+                });
+
+                // 趋势分析（基于时间字段）
+                const trendTimeFields = columns.filter(col => col.isDate);
+                if (trendTimeFields.length > 0 && data.length > 1) {
+                    const tf = trendField || (trendTimeFields[0] && trendTimeFields[0].dataIndex) || '';
+                    const seriesValues = data
+                        .map(row => {
+                            const colConf = columns.find(c => c.dataIndex === tf);
+                            return parseDateByFormats(row[tf], colConf);
+                        })
+                        .filter(d => d && d.isValid());
+                    if (seriesValues.length > 0) {
+                        const gran = granularity || 'day';
+                        const bucketKey = (d) => {
+                            if (gran === 'day') return d.format('YYYY-MM-DD');
+                            if (gran === 'week') {
+                                const dow = d.day(); // 0=周日, 1=周一, ... 6=周六
+                                const monday = d.subtract((dow + 6) % 7, 'day');
+                                return monday.format('YYYY-MM-DD'); // 以周一日期作为周标识
+                            }
+                            return d.format('YYYY-MM');
+                        };
+                        const buckets = {};
+                        seriesValues.forEach(d => {
+                            const k = bucketKey(d);
+                            buckets[k] = (buckets[k] || 0) + 1;
+                        });
+                        const labels = Object.keys(buckets).sort();
+                        const values = labels.map(l => buckets[l]);
+                        stats.trends = {
+                            labels,
+                            values,
+                            field: tf,
+                            granularity: gran
+                        };
+                    }
+                }
+
+                stats.dataQuality = dataQuality;
+
+                return stats;
+            };
+
+            // 仅计算趋势（用于粒度/字段变更时的轻量更新，避免干扰其它统计）
+            function computeTrendsOnly(dataArr, field, gran) {
+                const trendTimeFields = columns.filter(col => col.isDate);
+                if (!field) return { labels: [], values: [], field: '', granularity: gran };
+                if (trendTimeFields.length === 0 || dataArr.length < 1) return { labels: [], values: [], field, granularity: gran };
+                const seriesValues = dataArr
+                    .map(row => {
+                        const colConf = columns.find(c => c.dataIndex === field);
+                        return parseDateByFormats(row[field], colConf);
+                    })
+                    .filter(d => d && d.isValid());
+                if (seriesValues.length === 0) return { labels: [], values: [], field, granularity: gran };
+                const bucketKey = (d) => {
+                    if (gran === 'day') return d.format('YYYY-MM-DD');
+                    if (gran === 'week') {
+                        const dow = d.day();
+                        const monday = d.subtract((dow + 6) % 7, 'day');
+                        return monday.format('YYYY-MM-DD');
+                    }
+                    return d.format('YYYY-MM');
+                };
+                const buckets = {};
+                seriesValues.forEach(d => {
+                    const k = bucketKey(d);
+                    buckets[k] = (buckets[k] || 0) + 1;
+                });
+                const labels = Object.keys(buckets).sort();
+                const values = labels.map(l => buckets[l]);
+                return { labels, values, field, granularity: gran };
+            }
+
+            // 更新统计数据（完整统计）
+            useEffect(() => {
+                const shouldUseWorker = useWorker && typeof Worker !== 'undefined' && filteredData.length > 5000;
+                if (shouldUseWorker) {
+                    try {
+                        const worker = ensureStatsWorker();
+                        // 由 enumFiltersMap 构建更轻量的值映射，避免每次重复扫描 config
+                        const filtersMap = Object.fromEntries(
+                            Object.entries(enumFiltersMap).map(([field, list]) => [field, (list || []).map(opt => opt.value)])
+                        );
+                        worker.onmessage = (evt) => {
+                            const payload = evt.data || {};
+                            const overrides = {
+                                enumDistribution: payload.enumDistribution || {},
+                                fieldStats: payload.fieldStats || undefined,
+                                numericStats: payload.numericStats || undefined,
+                                timeRange: payload.timeRange ? Object.fromEntries(Object.entries(payload.timeRange).map(([k, v]) => ([k, v]))) : undefined
+                            };
+                            // 将 worker 返回的 timeRange 的时间戳转换为 Date 实例
+                            if (overrides.timeRange) {
+                                const tr = {};
+                                for (const k in payload.timeRange) {
+                                    const v = payload.timeRange[k];
+                                    tr[k] = { title: v.title, min: new Date(v.min), max: new Date(v.max), count: v.count };
+                                }
+                                overrides.timeRange = tr;
+                            }
+                            const base = calculateStats(filteredData, selectedTrendField, trendGranularity, data.length, overrides);
+                            if (payload.trends && payload.trends.labels && payload.trends.labels.length) {
+                                base.trends = {
+                                    labels: payload.trends.labels,
+                                    values: payload.trends.values,
+                                    field: payload.trends.field,
+                                    granularity: payload.trends.granularity
+                                };
+                            }
+                            setStatsData(base);
+                        };
+                        worker.postMessage({ data: filteredData, filtersMap, columns: columns.map(c => ({ dataIndex: c.dataIndex, title: c.title, isDate: !!c.isDate })), trendField: selectedTrendField, granularity: trendGranularity });
+                        return;
+                    } catch { }
+                }
+                const stats = getCachedOrComputeStats(filteredData, selectedTrendField, trendGranularity, data.length);
+                setStatsData(stats);
+
+                // 根据最新枚举字段更新当前选择：若当前不存在则重置为第一个；无可用时清空
+                const enumKeys = Object.keys(stats.enumDistribution);
+                if (enumKeys.length === 0) {
+                    if (selectedEnumField) setSelectedEnumField('');
+                } else if (!enumKeys.includes(selectedEnumField)) {
+                    setSelectedEnumField(enumKeys[0]);
+                }
+                // 自动选择第一个时间字段用于趋势分析
+                if (!selectedTrendField) {
+                    const firstDate = columns.find(c => c.isDate);
+                    if (firstDate && firstDate.dataIndex) {
+                        setSelectedTrendField(firstDate.dataIndex);
+                    }
+                }
+            }, [filteredData, config]);
+
+            // 单一来源：当数据/配置/字段/粒度变化时，轻量更新趋势
+            useEffect(() => {
+                if (!selectedTrendField) return;
+                const trends = computeTrendsOnly(filteredData, selectedTrendField, trendGranularity);
+                setStatsData(prev => ({ ...(prev || {}), trends }));
+            }, [filteredData, selectedTrendField, trendGranularity, config?.columns]);
+
+            function openQualityDetails(kind) {
+                if (!statsData || !statsData.dataQuality) return;
+                const dq = statsData.dataQuality;
+                let title = '';
+                let items = [];
+                if (kind === 'topMissing') {
+                    title = '缺失最严重字段 Top5';
+                    items = (dq.topMissing || []).map(m => ({ key: m.key, text: `${m.title} - 非空率 ${Math.round((m.nonNullRate || 0) * 100)}%` }));
+                } else if (kind === 'ruleTypeRates') {
+                    title = '按规则类型合规率';
+                    const map = { enum: '枚举', range: '数值范围', regex: '正则', dateParsable: '可解析日期', unique: '唯一性' };
+                    items = Object.entries(dq.ruleTypeRates || {}).map(([k, v]) => ({ key: k, text: `${map[k] || k} - ${v == null ? '未配置' : v + '%'}` }));
+                } else if (kind === 'uniqueness') {
+                    title = '唯一性问题热区';
+                    items = (dq.uniquenessHotspots || []).map(u => ({ key: u.field, text: `${u.title} - 重复 ${u.duplicateCount}` }));
+                } else if (kind === 'enumCoverage') {
+                    title = '枚举合法值覆盖率';
+                    items = (dq.enumCoverage || []).map(e => ({ key: e.field, text: `${e.title} - 覆盖 ${e.coverage}%` }));
+                } else if (kind === 'dateRates') {
+                    title = '日期可解析率/新鲜度';
+                    items = (dq.dateParsableRates || []).map(dpr => {
+                        const fresh = (dq.dateFreshness || []).find(x => x.field === dpr.field);
+                        return ({ key: dpr.field, text: `${dpr.title} - 可解析 ${dpr.rate}% · 7天${fresh ? fresh.last7 : 0}% · 30天${fresh ? fresh.last30 : 0}%` });
+                    });
+                } else if (kind === 'numericOutliers') {
+                    title = '数值异常值比例(IQR)';
+                    items = (dq.numericOutlierRates || []).map(nr => ({ key: nr.field, text: `${nr.title} - 异常 ${nr.rate}%` }));
+                }
+                setQualityDetailModal({ open: true, title, items });
+            }
+
+            // 打开统计抽屉时，基于当前 stats 再次校正默认枚举字段
+            useEffect(() => {
+                if (!statsDrawer) return;
+                const enumKeys = Object.keys(statsData.enumDistribution || {});
+                if (enumKeys.length === 0) {
+                    if (selectedEnumField) setSelectedEnumField('');
+                } else if (!enumKeys.includes(selectedEnumField)) {
+                    setSelectedEnumField(enumKeys[0]);
+                }
+            }, [statsDrawer, statsData.enumDistribution, selectedEnumField]);
+
+            // 渲染图表
+            const renderChart = () => {
+                if (!chartRef.current || !statsData.enumDistribution || !selectedEnumField) return;
+                if (typeof echarts === 'undefined') return;
+
+                // 销毁之前的图表
+                if (chartInstance.current) {
+                    chartInstance.current.dispose();
+                }
+
+                const distribution = statsData.enumDistribution[selectedEnumField];
+                if (!distribution) return;
+
+                const labels = Object.keys(distribution);
+                const counts = Object.values(distribution);
+
+                // 获取字段的标题
+                const fieldTitle = getColumnTitle(columnMap, selectedEnumField);
+
+                chartInstance.current = echarts.init(chartRef.current);
+
+                const option = {
+                    title: {
+                        text: `${fieldTitle} 分布统计`,
+                        left: 'center',
+                        textStyle: {
+                            fontSize: 16
+                        }
+                    },
+                    tooltip: {
+                        trigger: 'item',
+                        formatter: '{a} <br/>{b}: {c} ({d}%)'
+                    },
+                    legend: {
+                        orient: 'horizontal',
+                        bottom: '5%',
+                        data: labels.map(label => getEnumDisplayText(enumFiltersMap, selectedEnumField, label))
+                    },
+                    series: [{
+                        name: fieldTitle,
+                        type: 'pie',
+                        radius: ['40%', '70%'],
+                        center: ['50%', '50%'],
+                        avoidLabelOverlap: false,
+                        itemStyle: {
+                            borderRadius: 10,
+                            borderColor: '#fff',
+                            borderWidth: 2
+                        },
+                        label: {
+                            show: false,
+                            position: 'center'
+                        },
+                        emphasis: {
+                            label: {
+                                show: true,
+                                fontSize: '18',
+                                fontWeight: 'bold'
+                            }
+                        },
+                        labelLine: {
+                            show: false
+                        },
+                        data: labels.map((label, index) => {
+                            const displayText = getEnumDisplayText(enumFiltersMap, selectedEnumField, label);
+                            let color = getEnumColor(enumFiltersMap, selectedEnumField, label);
+                            if (!color) {
+                                color = PIE_FALLBACK_COLORS[index % PIE_FALLBACK_COLORS.length];
+                            }
+                            return {
+                                value: counts[index],
+                                name: displayText,
+                                itemStyle: { color }
+                            };
+                        })
+                    }]
+                };
+
+                chartInstance.current.setOption(option);
+            };
+
+            // 渲染趋势图
+            const renderTrendChart = () => {
+                if (!trendChartRef.current || !statsData.trends || !statsData.trends.labels) return;
+                if (typeof echarts === 'undefined') return;
+                if (trendChartInstance.current) {
+                    trendChartInstance.current.dispose();
+                }
+                trendChartInstance.current = echarts.init(trendChartRef.current);
+                const fieldTitle = getColumnTitle(columnMap, statsData.trends.field || '');
+                const granCN = statsData.trends.granularity === 'day' ? '按日' : (statsData.trends.granularity === 'week' ? '按周' : '按月');
+                const option = {
+                    title: {
+                        text: `时间趋势（${fieldTitle}，${granCN}）`,
+                        left: 'center',
+                        textStyle: { fontSize: 16 }
+                    },
+                    tooltip: { trigger: 'axis' },
+                    grid: { left: 40, right: 20, top: 50, bottom: 40 },
+                    xAxis: { type: 'category', data: statsData.trends.labels },
+                    yAxis: { type: 'value', minInterval: 1 },
+                    series: [{ name: '记录数', type: 'line', smooth: true, data: statsData.trends.values }]
+                };
+                trendChartInstance.current.setOption(option);
+            };
+
+            // 当统计抽屉打开时渲染图表
+            useEffect(() => {
+                if (statsDrawer && chartRef.current) {
+                    const distKeys = Object.keys(statsData.enumDistribution || {});
+                    const currentField = selectedEnumField || (distKeys[0] || '');
+                    const dist = (statsData.enumDistribution || {})[currentField] || {};
+                    const sig = `${currentField}|${JSON.stringify(dist)}|${distKeys.length}`;
+                    if (sig === lastPieSigRef.current) return;
+                    lastPieSigRef.current = sig;
+                    debounceRender(pieRenderTimerRef, renderChart, 120);
+                } else if (!statsDrawer && chartInstance.current) {
+                    chartInstance.current.dispose();
+                    chartInstance.current = null;
+                    if (pieRenderTimerRef.current) { clearTimeout(pieRenderTimerRef.current); pieRenderTimerRef.current = null; }
+                    lastPieSigRef.current = '';
+                }
+            }, [statsDrawer, statsData.enumDistribution, selectedEnumField]);
+
+            useEffect(() => {
+                if (statsDrawer && trendChartRef.current) {
+                    debounceRender(trendRenderTimerRef, renderTrendChart, 120);
+                } else if (!statsDrawer && trendChartInstance.current) {
+                    trendChartInstance.current.dispose();
+                    trendChartInstance.current = null;
+                    if (trendRenderTimerRef.current) { clearTimeout(trendRenderTimerRef.current); trendRenderTimerRef.current = null; }
+                }
+            }, [statsDrawer, statsData.trends, selectedTrendField, trendGranularity]);
+
+            useEffect(() => {
+                return () => {
+                    if (chartInstance.current) {
+                        chartInstance.current.dispose();
+                        chartInstance.current = null;
+                    }
+                    if (trendChartInstance.current) {
+                        trendChartInstance.current.dispose();
+                        trendChartInstance.current = null;
+                    }
+                    if (statsWorkerRef.current) {
+                        try { statsWorkerRef.current.terminate(); } catch { }
+                        statsWorkerRef.current = null;
+                    }
+                    if (workerUrlRef.current) {
+                        try { URL.revokeObjectURL(workerUrlRef.current); } catch { }
+                        workerUrlRef.current = null;
+                    }
+                };
+            }, []);
 
             // 工具栏列搜索控件
             const renderColumnSearchInputs = React.useMemo(() => () => (
@@ -316,7 +1210,7 @@
                                 style={{ width: 330 }}
                                 placeholder={[`${col.title} - 开始`, `${col.title} - 结束`]}
                                 showTime={col.dateFormat && col.dateFormat.includes('HH:mm:ss')}
-                                format={col.dateFormat || 'YYYY-MM-DD HH:mm:ss'}
+                                format={col.dateFormat || DEFAULT_DATE_FORMAT}
                                 value={columnSearch[col.dataIndex] ? [
                                     dayjs(columnSearch[col.dataIndex].start),
                                     dayjs(columnSearch[col.dataIndex].end)
@@ -324,8 +1218,8 @@
                                 onChange={(dates) => setColumnSearch(prev => ({
                                     ...prev,
                                     [col.dataIndex]: dates ? {
-                                        start: dates[0].format(col.dateFormat || 'YYYY-MM-DD HH:mm:ss'),
-                                        end: dates[1].format(col.dateFormat || 'YYYY-MM-DD HH:mm:ss')
+                                        start: dates[0].format(col.dateFormat || DEFAULT_DATE_FORMAT),
+                                        end: dates[1].format(col.dateFormat || DEFAULT_DATE_FORMAT)
                                     } : null
                                 }))}
                             />
@@ -373,18 +1267,34 @@
                 });
             };
 
+            // 统一的时间解析函数：优先使用列配置的 dateFormat；否则尝试常见格式与 ISO
+            function parseDateByFormats(value, colConf) {
+                if (!value) return null;
+                const tryFormats = [];
+                if (colConf && colConf.dateFormat) tryFormats.push(colConf.dateFormat);
+                // 常见格式集合
+                tryFormats.push(...COMMON_DATE_FORMATS);
+                // 逐个尝试
+                for (const fmt of tryFormats) {
+                    const d = dayjs(value, fmt, true);
+                    if (d.isValid()) return d;
+                }
+                // 回退到 dayjs 默认解析（ISO 等）
+                const d2 = dayjs(value);
+                return d2.isValid() ? d2 : null;
+            }
+
             // 表格列定义
             const columns = React.useMemo(() => {
                 const baseCols = (config.columns || []).map(col => {
                     return {
                         ...col,
                         ellipsis: false,
-                        width: Math.max(config.columnMinWidth || 160, col.width || 0) || (config.columnMinWidth || 160),
+                        width: col.width || config.columnMinWidth || null,
                         sorter: col.sortable ? createStringComparator(col.dataIndex) : undefined,
                         render: (text) => {
                             // 枚举列依然渲染Tag
-                            const filterKey = col.dataIndex + '_filters';
-                            const filters = config[filterKey];
+                            const filters = enumFiltersMap[col.dataIndex];
                             if (filters) {
                                 // 找等值匹配
                                 let found = filters.find(f => f.value === text);
@@ -405,6 +1315,12 @@
                             } else if (typeof text === 'number') {
                                 displayContent = text.toString();
                                 tooltipContent = text.toString();
+                            } else if (col.isDate) {
+                                const parsed = parseDateByFormats(text, col);
+                                const fmt = col.dateFormat || DEFAULT_DATE_FORMAT;
+                                const formatted = parsed ? parsed.format(fmt) : (text.toString());
+                                displayContent = formatted;
+                                tooltipContent = formatted;
                             } else if (typeof text === 'object') {
                                 displayContent = JSON.stringify(text, null, 2);
                                 tooltipContent = (
@@ -743,15 +1659,18 @@
                 Object.entries(columnSearch).forEach(([col, val]) => {
                     if (val !== undefined && val !== '' && val !== null) {
                         const filters = config[col + '_filters'] || [];
-                        const filterOpt = filters.find(f => f.value === val);
                         if (typeof val === 'object' && val.start && val.end) {
                             // 时间范围搜索
                             const colConf = (config.columns || []).find(c => c.dataIndex === col);
                             if (colConf && colConf.isDate) {
                                 d = d.filter(row => {
-                                    const rowTs = dayjs(row[col]).valueOf();
-                                    const startTs = dayjs(val.start).valueOf();
-                                    const endTs = dayjs(val.end).valueOf();
+                                    const rowD = parseDateByFormats(row[col], colConf);
+                                    const startD = parseDateByFormats(val.start, colConf) || dayjs(val.start);
+                                    const endD = parseDateByFormats(val.end, colConf) || dayjs(val.end);
+                                    if (!rowD || !startD.isValid() || !endD.isValid()) return false;
+                                    const rowTs = rowD.valueOf();
+                                    const startTs = startD.valueOf();
+                                    const endTs = endD.valueOf();
                                     return rowTs >= startTs && rowTs <= endTs; // 包含边界
                                 });
                             }
@@ -777,6 +1696,7 @@
                             </Upload>
                             <Button onClick={exportConfigFile}>导出配置</Button>
                             <Button onClick={openConfigDrawer}>设置</Button>
+                            <Button onClick={() => setStatsDrawer(true)} disabled={!data.length}>数据统计</Button>
                             <Button onClick={clearData} disabled={!data.length} danger>清空数据</Button>
                             <Button onClick={resetConfig}>重置配置</Button>
                             <Button onClick={resetAll} danger>全部重置</Button>
@@ -814,6 +1734,7 @@
                             rowKey={config.rowKey && config.rowKey !== 'default' ? config.rowKey : '__row_index'}
                             pagination={{
                                 pageSize: tablePageSize,
+                                current: tableCurrentPage,
                                 showSizeChanger: true,
                                 pageSizeOptions: ['10', '20', '50', '100'],
                                 onChange: (page, size) => {
@@ -821,6 +1742,15 @@
                                     if (size && size !== tablePageSize && !pageSizeChangingRef.current) {
                                         pageSizeChangingRef.current = true;
                                         showGlobalOverlay();
+                                    }
+                                    // 页码切换时也展示覆盖层，并以过渡方式更新
+                                    if (page !== tableCurrentPage && !pageChangingRef.current) {
+                                        pageChangingRef.current = true;
+                                        showGlobalOverlay();
+                                        // 推迟到下一事件循环，确保覆盖层先插入 DOM 并绘制
+                                        setTimeout(() => {
+                                            startTransition(() => setTableCurrentPage(page));
+                                        }, 0);
                                     }
                                 },
                                 onShowSizeChange: (current, size) => {
@@ -872,11 +1802,11 @@
                         <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                             <Form layout="horizontal" labelAlign="right" labelCol={{ span: 4 }} wrapperCol={{ span: 19 }}>
                                 {editRow && Object.keys(editRow).filter(key => key !== '__row_index').map(key => {
-                                    const colConf = (config.columns || []).find(col => col.dataIndex === key);
+                                    const colConf = columnMap[key];
                                     const editable = colConf ? !!colConf.editable : true;
                                     const filters = config[key + '_filters'] || [];
                                     return (
-                                        <Form.Item label={colConf ? colConf.title : key} key={key}>
+                                        <Form.Item label={getColumnTitle(columnMap, key)} key={key}>
                                             {filters.length > 0 ? (
                                                 <Select
                                                     value={editRow[key]}
@@ -890,9 +1820,9 @@
                                             ) : colConf && colConf.isDate ? (
                                                 <DatePicker
                                                     showTime={colConf.dateFormat && colConf.dateFormat.includes('HH:mm:ss')}
-                                                    format={colConf.dateFormat || 'YYYY-MM-DD HH:mm:ss'}
+                                                    format={colConf.dateFormat || DEFAULT_DATE_FORMAT}
                                                     value={editRow[key] ? dayjs(editRow[key]) : null}
-                                                    onChange={(date) => setEditRow({ ...editRow, [key]: date ? date.format(colConf.dateFormat || 'YYYY-MM-DD HH:mm:ss') : null })}
+                                                    onChange={(date) => setEditRow({ ...editRow, [key]: date ? date.format(colConf.dateFormat || DEFAULT_DATE_FORMAT) : null })}
                                                     disabled={!editable}
                                                 />
                                             ) : (
@@ -1109,6 +2039,426 @@
                     >
                         导入新配置可能会影响数据显示，请选择操作：
                     </Modal>
+                    {/* 统计抽屉 */}
+                    <Drawer
+                        title="数据统计"
+                        open={statsDrawer}
+                        onClose={() => setStatsDrawer(false)}
+                        width={600}
+                        footer={
+                            <Button onClick={() => setStatsDrawer(false)}>关闭</Button>
+                        }
+                    >
+                        <div style={{ padding: '16px 0' }}>
+                            {/* 基础统计 */}
+                            <Row gutter={16} style={{ marginBottom: 24 }}>
+                                <Col span={8}>
+                                    <Card>
+                                        <Statistic
+                                            title="总记录数"
+                                            value={statsData.total || 0}
+                                            valueStyle={{ color: '#3f8600' }}
+                                        />
+                                    </Card>
+                                </Col>
+                                <Col span={8}>
+                                    <Card>
+                                        <Statistic
+                                            title="筛选后记录数"
+                                            value={filteredData.length}
+                                            valueStyle={{ color: '#1890ff' }}
+                                        />
+                                    </Card>
+                                </Col>
+                                <Col span={8}>
+                                    <Card>
+                                        <Statistic
+                                            title="筛选比例"
+                                            value={statsData.total > 0 ? ((filteredData.length / statsData.total) * 100).toFixed(1) : 0}
+                                            suffix="%"
+                                            valueStyle={{ color: '#722ed1' }}
+                                        />
+                                    </Card>
+                                </Col>
+                            </Row>
+
+                            {/* 时间范围统计 */}
+                            {statsData.timeRange && Object.keys(statsData.timeRange).length > 0 && (
+                                <Card title="时间范围" style={{ marginBottom: 24 }}>
+                                    {Object.entries(statsData.timeRange).map(([fieldName, timeInfo]) => {
+                                        const spanDays = (timeInfo?.min && timeInfo?.max) ? Math.max(0, Math.ceil((dayjs(timeInfo.max).valueOf() - dayjs(timeInfo.min).valueOf()) / (24 * 3600 * 1000))) : 0;
+                                        return (
+                                            <div key={fieldName} style={{ marginBottom: '16px', padding: '12px', border: '1px solid #f0f0f0', borderRadius: '6px' }}>
+                                                <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#1890ff' }}>
+                                                    {timeInfo?.title || fieldName}
+                                                </div>
+                                                <Row gutter={16}>
+                                                    <Col span={8}>
+                                                        <Statistic title="最早时间" value={timeInfo?.min ? dayjs(timeInfo.min).format(DEFAULT_DATE_FORMAT) : '无数据'} valueStyle={{ fontSize: '12px' }} />
+                                                    </Col>
+                                                    <Col span={8}>
+                                                        <Statistic title="最晚时间" value={timeInfo?.max ? dayjs(timeInfo.max).format(DEFAULT_DATE_FORMAT) : '无数据'} valueStyle={{ fontSize: '12px' }} />
+                                                    </Col>
+                                                    <Col span={8}>
+                                                        <Statistic title="时间跨度(天)" value={spanDays} valueStyle={{ fontSize: '12px', color: '#52c41a' }} />
+                                                    </Col>
+                                                </Row>
+                                            </div>
+                                        );
+                                    })}
+                                </Card>
+                            )}
+
+                            {/* 趋势分析（按时间分桶） */}
+                            {statsData.trends && (
+                                <Card title="时间趋势" style={{ marginBottom: 24 }}>
+                                    <Row gutter={12} style={{ marginBottom: 12 }}>
+                                        <Col span={14}>
+                                            <Select
+                                                style={{ width: '100%' }}
+                                                value={selectedTrendField || ''}
+                                                onChange={setSelectedTrendField}
+                                                placeholder="选择时间字段"
+                                            >
+                                                {(config.columns || []).filter(c => c.isDate).map(c => (
+                                                    <Option key={c.dataIndex} value={c.dataIndex}>{c.title || c.dataIndex}</Option>
+                                                ))}
+                                            </Select>
+                                        </Col>
+                                        <Col span={10}>
+                                            <Select
+                                                style={{ width: '100%' }}
+                                                value={trendGranularity}
+                                                onChange={setTrendGranularity}
+                                            >
+                                                <Option value="day">按日</Option>
+                                                <Option value="week">按周</Option>
+                                                <Option value="month">按月</Option>
+                                            </Select>
+                                        </Col>
+                                    </Row>
+                                    {((config.columns || []).filter(c => c.isDate).length === 0) ? (
+                                        <div style={{ padding: '12px', color: '#999' }}>无时间类型列，请在配置中为需要的列设置 isDate</div>
+                                    ) : (!selectedTrendField || !statsData.trends.labels || statsData.trends.labels.length === 0) ? (
+                                        <div style={{ padding: '12px', color: '#999' }}>请选择时间字段，或当前条件下暂无可统计的数据</div>
+                                    ) : (
+                                        <div style={{ height: 320 }}>
+                                            <div ref={trendChartRef} style={{ width: '100%', height: '100%' }} />
+                                        </div>
+                                    )}
+                                </Card>
+                            )}
+
+                            {/* 数值字段统计 */}
+                            {statsData.numericStats && Object.keys(statsData.numericStats).length > 0 && (
+                                <Card title="数值字段统计" style={{ marginBottom: 24 }}>
+                                    {Object.entries(statsData.numericStats).map(([fieldName, numericStat]) => (
+                                        <div key={fieldName} style={{ marginBottom: '16px', padding: '12px', border: '1px solid #f0f0f0', borderRadius: '6px' }}>
+                                            <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#1890ff' }}>
+                                                {numericStat.title}
+                                            </div>
+                                            <Row gutter={16}>
+                                                <Col span={6}>
+                                                    <Statistic
+                                                        title="平均值"
+                                                        value={numericStat.mean}
+                                                        valueStyle={{ fontSize: '14px' }}
+                                                    />
+                                                </Col>
+                                                <Col span={6}>
+                                                    <Statistic
+                                                        title="中位数"
+                                                        value={numericStat.median}
+                                                        valueStyle={{ fontSize: '14px' }}
+                                                    />
+                                                </Col>
+                                                <Col span={6}>
+                                                    <Statistic
+                                                        title="标准差"
+                                                        value={numericStat.stdDev}
+                                                        valueStyle={{ fontSize: '14px' }}
+                                                    />
+                                                </Col>
+                                                <Col span={6}>
+                                                    <Statistic
+                                                        title="范围"
+                                                        value={numericStat.range}
+                                                        valueStyle={{ fontSize: '14px' }}
+                                                    />
+                                                </Col>
+                                            </Row>
+                                            <Row gutter={16} style={{ marginTop: '8px' }}>
+                                                <Col span={6}>
+                                                    <div style={{ fontSize: '12px', color: '#666' }}>
+                                                        最小值: {numericStat.min}
+                                                    </div>
+                                                </Col>
+                                                <Col span={6}>
+                                                    <div style={{ fontSize: '12px', color: '#666' }}>
+                                                        最大值: {numericStat.max}
+                                                    </div>
+                                                </Col>
+                                                <Col span={6}>
+                                                    <div style={{ fontSize: '12px', color: '#666' }}>
+                                                        25%分位: {numericStat.q25}
+                                                    </div>
+                                                </Col>
+                                                <Col span={6}>
+                                                    <div style={{ fontSize: '12px', color: '#666' }}>
+                                                        75%分位: {numericStat.q75}
+                                                    </div>
+                                                </Col>
+                                            </Row>
+                                        </div>
+                                    ))}
+                                </Card>
+                            )}
+
+                            {/* 枚举分布图表 */}
+                            {statsData.enumDistribution && Object.keys(statsData.enumDistribution).length > 0 && (
+                                <Card title="枚举分布" style={{ marginBottom: 24 }}>
+                                    {/* 枚举字段选择器 */}
+                                    <div style={{ marginBottom: '16px' }}>
+                                        <Select
+                                            value={selectedEnumField}
+                                            onChange={setSelectedEnumField}
+                                            style={{ width: '100%' }}
+                                            placeholder="选择要查看的枚举字段"
+                                        >
+                                            {Object.keys(statsData.enumDistribution).map(fieldName => (
+                                                <Option key={fieldName} value={fieldName}>
+                                                    {getColumnTitle(columnMap, fieldName)}
+                                                </Option>
+                                            ))}
+                                        </Select>
+                                    </div>
+
+
+                                    <div style={{ height: '400px', position: 'relative' }}>
+                                        <div ref={chartRef} style={{ width: '100%', height: '100%' }}></div>
+                                    </div>
+                                </Card>
+                            )}
+
+                            {/* 字段统计 */}
+                            {statsData.fieldStats && Object.keys(statsData.fieldStats).length > 0 && (
+                                <Card title="字段统计">
+                                    <Row gutter={[16, 16]}>
+                                        {Object.entries(statsData.fieldStats).map(([fieldName, fieldStat]) => (
+                                            <Col span={8} key={fieldName}>
+                                                <Card size="small" bodyStyle={{ minHeight: 130, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                                    <Statistic
+                                                        title={<Tooltip title={`${getColumnTitle(columnMap, fieldName)} (${fieldName})`}><span style={{ display: 'inline-block', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{`${getColumnTitle(columnMap, fieldName)} (${fieldName})`}</span></Tooltip>}
+                                                        value={fieldStat.total}
+                                                        suffix={`/ ${filteredData.length}`}
+                                                        valueStyle={{ fontSize: '16px' }}
+                                                    />
+                                                    <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                                                        唯一值: {fieldStat.uniqueCount} | 类型: {fieldStat.type}
+                                                        {fieldStat.nullCount > 0 && ` | 空值: ${fieldStat.nullCount}`}
+                                                    </div>
+                                                </Card>
+                                            </Col>
+                                        ))}
+                                    </Row>
+                                </Card>
+                            )}
+
+                            {/* 数据质量评估 */}
+                            {statsData.dataQuality && (
+                                <Card title="数据质量评估" style={{ marginBottom: 24 }}>
+                                    {/* 概览四项 */}
+                                    <Row gutter={16}>
+                                        <Col span={6} style={{ textAlign: 'center' }}>
+                                            <Tooltip title="非空率（平均）= 对每个字段的非空率求平均(%)。单字段非空率=该字段非空记录数/总记录数">
+                                                <Statistic
+                                                    title="非空率（平均）"
+                                                    value={statsData.dataQuality.completeness || 0}
+                                                    suffix="%"
+                                                    valueStyle={{
+                                                        color: (statsData.dataQuality.completeness || 0) >= 80 ? '#52c41a' :
+                                                            (statsData.dataQuality.completeness || 0) >= 60 ? '#faad14' : '#ff4d4f'
+                                                    }}
+                                                />
+                                            </Tooltip>
+                                        </Col>
+                                        <Col span={6} style={{ textAlign: 'center' }}>
+                                            <Tooltip title="规则合规率= 带规则字段通过率的平均(%)。仅统计已配置规则的字段">
+                                                <Statistic
+                                                    title="规则合规率"
+                                                    value={(statsData.dataQuality.ruleCoverage || 0) === 0 ? null : (statsData.dataQuality.consistency || 0)}
+                                                    suffix={(statsData.dataQuality.ruleCoverage || 0) === 0 ? undefined : "%"}
+                                                    valueStyle={{
+                                                        color: (statsData.dataQuality.consistency || 0) >= 80 ? '#52c41a' :
+                                                            (statsData.dataQuality.consistency || 0) >= 60 ? '#faad14' : '#ff4d4f'
+                                                    }}
+                                                    formatter={val => ((statsData.dataQuality.ruleCoverage || 0) === 0 ? '—' : val)}
+                                                />
+                                            </Tooltip>
+                                        </Col>
+                                        <Col span={6} style={{ textAlign: 'center' }}>
+                                            <Statistic
+                                                title="规则覆盖率"
+                                                value={statsData.dataQuality.ruleCoverage || 0}
+                                                suffix={(statsData.dataQuality.ruleCoverage || 0) === 0 ? undefined : "%"}
+                                                valueStyle={{ color: '#722ed1' }}
+                                                formatter={val => ((statsData.dataQuality.ruleCoverage || 0) === 0 ? '—' : val)}
+                                            />
+                                        </Col>
+                                        <Col span={6} style={{ textAlign: 'center' }}>
+                                            <Statistic
+                                                title="字段总数"
+                                                value={statsData.dataQuality.totalFields || 0}
+                                                valueStyle={{ color: '#1890ff' }}
+                                            />
+                                        </Col>
+                                    </Row>
+
+                                    {/* 缺失TopN + 规则类型合规率 */}
+                                    <Row gutter={16} style={{ marginTop: 16 }}>
+                                        <Col span={12}>
+                                            <Card size="small" title="缺失字段Top5" bodyStyle={{ minHeight: 140 }}>
+                                                {(statsData.dataQuality.topMissing || []).length === 0 ? (
+                                                    <div style={{ color: '#999' }}>—</div>
+                                                ) : (
+                                                    (statsData.dataQuality.topMissing || []).map((m) => {
+                                                        const rate = Math.round((m.nonNullRate || 0) * 100);
+                                                        const color = rate < 60 ? '#ff4d4f' : (rate < 80 ? '#faad14' : '#52c41a');
+                                                        return (
+                                                            <div key={m.key} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                                                                <span>{m.title}</span>
+                                                                <span style={{ color }}>{rate}%</span>
+                                                            </div>
+                                                        );
+                                                    })
+                                                )}
+                                            </Card>
+                                        </Col>
+                                        <Col span={12}>
+                                            <Card size="small" title="按规则类型合规率" bodyStyle={{ minHeight: 140 }}>
+                                                {(() => {
+                                                    const r = statsData.dataQuality.ruleTypeRates || {};
+                                                    const rows = [
+                                                        { k: 'enum', n: '枚举' },
+                                                        { k: 'range', n: '数值范围' },
+                                                        { k: 'regex', n: '正则' },
+                                                        { k: 'dateParsable', n: '可解析日期' },
+                                                        { k: 'unique', n: '唯一性' },
+                                                    ];
+                                                    return rows.map(row => (
+                                                        <div key={row.k} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                                                            <span>{row.n}</span>
+                                                            <span>{r[row.k] == null ? '—' : `${r[row.k]}%`}</span>
+                                                        </div>
+                                                    ));
+                                                })()}
+                                            </Card>
+                                        </Col>
+                                    </Row>
+
+                                    {/* 更多信号 */}
+                                    <Row gutter={16} style={{ marginTop: 16 }}>
+                                        <Col span={12}>
+                                            <Card size="small" title="唯一性问题热区" bodyStyle={{ minHeight: 140 }}>
+                                                {(statsData.dataQuality.uniquenessHotspots || []).length === 0 ? (
+                                                    <div style={{ color: '#999' }}>—</div>
+                                                ) : (
+                                                    (statsData.dataQuality.uniquenessHotspots || []).map(u => (
+                                                        <div key={u.field} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                                                            <span>{u.title}</span>
+                                                            <span style={{ color: '#ff4d4f' }}>重复 {u.duplicateCount}</span>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </Card>
+                                        </Col>
+                                        <Col span={12}>
+                                            <Card size="small" title="枚举合法值覆盖率" bodyStyle={{ minHeight: 140 }}>
+                                                {(statsData.dataQuality.enumCoverage || []).length === 0 ? (
+                                                    <div style={{ color: '#999' }}>—</div>
+                                                ) : (
+                                                    (statsData.dataQuality.enumCoverage || []).map(ei => (
+                                                        <div key={ei.field} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                                                            <span>{ei.title}</span>
+                                                            <span>{ei.coverage}%</span>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </Card>
+                                        </Col>
+                                    </Row>
+
+                                    <Row gutter={16} style={{ marginTop: 16 }}>
+                                        <Col span={12}>
+                                            <Card size="small" title="日期可解析率/新鲜度" bodyStyle={{ minHeight: 140 }}>
+                                                {(statsData.dataQuality.dateParsableRates || []).length === 0 ? (
+                                                    <div style={{ color: '#999' }}>—</div>
+                                                ) : (
+                                                    (statsData.dataQuality.dateParsableRates || []).map(dpr => {
+                                                        const fresh = (statsData.dataQuality.dateFreshness || []).find(x => x.field === dpr.field);
+                                                        return (
+                                                            <div key={dpr.field} style={{ marginBottom: 8 }}>
+                                                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                                    <span>{dpr.title}</span>
+                                                                    <span>{dpr.rate}%</span>
+                                                                </div>
+                                                                <div style={{ display: 'flex', justifyContent: 'flex-end', color: '#999', fontSize: '12px', marginTop: 2 }}>
+                                                                    <span>7天 {fresh ? fresh.last7 : 0}% · 30天 {fresh ? fresh.last30 : 0}%</span>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })
+                                                )}
+                                            </Card>
+                                        </Col>
+                                        <Col span={12}>
+                                            <Card size="small" title="数值异常值比例(IQR)" bodyStyle={{ minHeight: 140 }}>
+                                                {(statsData.dataQuality.numericOutlierRates || []).length === 0 ? (
+                                                    <div style={{ color: '#999' }}>—</div>
+                                                ) : (
+                                                    (statsData.dataQuality.numericOutlierRates || []).map(nr => (
+                                                        <div key={nr.field} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                                                            <span>{nr.title}</span>
+                                                            <span>{nr.rate}%</span>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </Card>
+                                        </Col>
+                                    </Row>
+                                </Card>
+                            )}
+
+                            {/* 规则一致性详情 */}
+                            {statsData.ruleViolations && Object.keys(statsData.ruleViolations).length > 0 && (
+                                <Card title="一致性规则结果" style={{ marginBottom: 24 }}>
+                                    <Row gutter={[16, 16]}>
+                                        {Object.entries(statsData.ruleViolations).map(([field, rv]) => (
+                                            <Col span={8} key={field}>
+                                                <Card size="small">
+                                                    <div style={{ fontWeight: 'bold', marginBottom: 6 }}>{rv.title || field}</div>
+                                                    <Row>
+                                                        <Col span={12}>
+                                                            <Statistic title="通过" value={rv.pass || 0} valueStyle={{ color: '#52c41a', fontSize: 14 }} />
+                                                        </Col>
+                                                        <Col span={12}>
+                                                            <Statistic title="不通过" value={rv.fail || 0} valueStyle={{ color: '#ff4d4f', fontSize: 14 }} />
+                                                        </Col>
+                                                    </Row>
+                                                </Card>
+                                            </Col>
+                                        ))}
+                                    </Row>
+                                </Card>
+                            )}
+
+                            {statsData.total === 0 && (
+                                <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                                    暂无数据，请先导入数据
+                                </div>
+                            )}
+                        </div>
+                    </Drawer>
                 </div>
             );
         }
@@ -1118,7 +2468,7 @@
             // 判断是否有枚举筛选
             const filters = (config[dataIndex + '_filters'] || []);
             // 获取列配置
-            const colConf = (config.columns || []).find(col => col.dataIndex === dataIndex);
+            const colConf = (config.columns || []).reduce((acc, c) => (acc || (c && c.dataIndex === dataIndex ? c : null)), null);
             return (
                 <td {...restProps} onDoubleClick={onDoubleClick}>
                     {editing && editingCol === dataIndex ? (
@@ -1136,9 +2486,9 @@
                         ) : colConf && colConf.isDate ? (
                             <DatePicker
                                 showTime={colConf.dateFormat && colConf.dateFormat.includes('HH:mm:ss')}
-                                format={colConf.dateFormat || 'YYYY-MM-DD HH:mm:ss'}
+                                format={colConf.dateFormat || DEFAULT_DATE_FORMAT}
                                 value={editRow && editRow[dataIndex] ? dayjs(editRow[dataIndex]) : null}
-                                onChange={(date) => setEditRow({ ...editRow, [dataIndex]: date ? date.format(colConf.dateFormat || 'YYYY-MM-DD HH:mm:ss') : null })}
+                                onChange={(date) => setEditRow({ ...editRow, [dataIndex]: date ? date.format(colConf.dateFormat || DEFAULT_DATE_FORMAT) : null })}
                                 autoFocus
                             />
                         ) : (
@@ -1179,8 +2529,7 @@
                                                 setEditRow({ ...editRow, [dataIndex]: val });
                                             }
                                         }}
-                                        onPressEnter={saveEdit}
-                                        autoFocus
+                                        disabled={!editable}
                                     />
                                 )
                             )
