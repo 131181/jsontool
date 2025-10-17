@@ -116,6 +116,13 @@
                         "ruleEnum": null,
                         "ruleUnique": true,
                         "ruleDateParsable": false
+                    },
+                    {
+                        "title": "文件路径",
+                        "dataIndex": "file_path",
+                        "editable": true,
+                        "searchable": true,
+                        "isSystemPath": true
                     }
                 ],
                 "status_filters": [
@@ -218,6 +225,13 @@
                         "ruleEnum": null,
                         "ruleUnique": false,
                         "ruleDateParsable": false
+                    },
+                    {
+                        "title": "附件路径",
+                        "dataIndex": "attachment_path",
+                        "editable": true,
+                        "searchable": true,
+                        "isSystemPath": true
                     }
                 ],
                 "order_status_filters": [

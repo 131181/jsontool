@@ -1,0 +1,14 @@
+{
+    "name": "JSONTool-桌面版",
+    "version": "1.0.3",
+    "private": true,
+    "main": "electron-main.js",
+    "description": "JSON 管理器（桌面应用）",
+    "scripts": {
+        "start": "electron .",
+        "postinstall": "echo 已完成依赖安装"
+    },
+    "devDependencies": {
+        "electron": "^36.5.0"
+    }
+}

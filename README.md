@@ -11,6 +11,7 @@
 - **📈 数据统计**: 时间趋势、枚举分布、数值统计与数据质量评估
 - **🔒 本地安全**: 所有数据处理在浏览器内完成
 - **🎨 高可用体验**: 分页切换过渡动画、全局加载指示器
+- **🖥️ 桌面端体验**: Electron 桌面应用支持
 
 ## 🚀 快速开始
 
@@ -23,6 +24,31 @@
 > 💡 **提示**: 首次使用建议先导入配置文件了解功能，再导入数据进行操作
 
     提供test_config.json配置文件以及test_data.jsonl数据文件供参考，可直接导入查看效果
+
+### 桌面端使用（Electron）
+
+- 启动方式：
+
+```bash
+# 进入目录并安装依赖（首次或依赖变更后）
+cd jsontool
+npm install
+
+## 提示: 如果安装失败命令行设置镜像,输入以下命令：$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/",然后运行npm install
+
+# 启动桌面应用
+npm start
+```
+
+> 说明：`electron-main.js` 会加载同目录的 `jsonl_viewer.html` 并启用桌面端特性。
+
+#### 桌面端特性简介
+
+- 系统文件删除：可根据导入的 JSON/JSONL 中标记的系统路径，直接在本机删除对应文件/文件夹（含递归与强制选项）。
+- 使用入口：
+  - 表格操作列中的“删除文件”按钮（逐行）；
+  - 工具栏中的“系统删除”按钮（批量，按配置的系统路径字段汇总）。
+- 实现说明：前端通过 `window.desktopFs.deletePaths` 调用主进程提供的文件删除能力（见 `electron-main.js` 的 `fs:deletePaths`），预加载脚本 `preload.js` 负责暴露安全 API。
 
 ## 📋 功能概览
 
@@ -186,16 +212,17 @@
 
 定义表格列的行为和属性：
 
-| 属性         | 类型    | 说明                                           |
-| ------------ | ------- | ---------------------------------------------- |
-| `title`      | string  | 列标题文本                                     |
-| `dataIndex`  | string  | 对应数据中的字段名                             |
-| `editable`   | boolean | 是否可编辑（行内/表单编辑生效）                |
-| `sortable`   | boolean | 是否允许排序                                   |
-| `searchable` | boolean | 是否出现在列级筛选工具栏                       |
-| `isDate`     | boolean | 是否为日期/时间字段                            |
-| `dateFormat` | string  | 日期格式（如 `YYYY-MM-DD HH:mm:ss`）           |
-| `width`      | number  | 列宽（可选，未设置则受 `columnMinWidth` 影响） |
+| 属性           | 类型    | 说明                                           |
+| -------------- | ------- | ---------------------------------------------- |
+| `title`        | string  | 列标题文本                                     |
+| `dataIndex`    | string  | 对应数据中的字段名                             |
+| `editable`     | boolean | 是否可编辑（行内/表单编辑生效）                |
+| `sortable`     | boolean | 是否允许排序                                   |
+| `searchable`   | boolean | 是否出现在列级筛选工具栏                       |
+| `isDate`       | boolean | 是否为日期/时间字段                            |
+| `dateFormat`   | string  | 日期格式（如 `YYYY-MM-DD HH:mm:ss`）           |
+| `width`        | number  | 列宽（可选，未设置则受 `columnMinWidth` 影响） |
+| `isSystemPath` | boolean | 是否为系统路径字段（用于桌面端“系统删除”功能） |
 
 #### 数据验证规则
 

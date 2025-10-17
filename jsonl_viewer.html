@@ -105,6 +105,14 @@
             font-size: 14px;
         }
 
+        /* 覆盖层内部容器（替代内联样式） */
+        .overlay-inner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
         @keyframes spin {
             to {
                 transform: rotate(360deg);
@@ -114,6 +122,13 @@
 </head>
 
 <body>
+    <!-- 首屏加载遮罩（覆盖外部资源加载的空白期） -->
+    <div id="global-loading-overlay" class="global-overlay">
+        <div class="overlay-inner">
+            <div class="spinner"></div>
+            <div class="label">加载中...</div>
+        </div>
+    </div>
     <div id="root"></div>
     <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
@@ -325,7 +340,7 @@
             const el = document.createElement('div');
             el.id = overlayId;
             el.className = 'global-overlay';
-            el.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:4px;"><div class="spinner"></div><div class="label">加载中...</div></div>';
+            el.innerHTML = '<div class="overlay-inner"><div class="spinner"></div><div class="label">加载中...</div></div>';
             document.body.appendChild(el);
         }
         function hideGlobalOverlay() {
@@ -388,7 +403,8 @@
                 { title: '更新时间', dataIndex: 'updated_at', editable: true, sortable: true, searchable: true, isDate: true, dateFormat: 'YYYY-MM-DD HH:mm:ss' },
                 { title: '克隆时间', dataIndex: 'cloned_at', editable: true, sortable: true, searchable: true },
                 { title: '克隆状态', dataIndex: 'clone_status', editable: true, sortable: true, searchable: true },
-                { title: '文件夹名', dataIndex: 'folder_name', editable: true, sortable: true, searchable: true }
+                { title: '文件夹名', dataIndex: 'folder_name', editable: true, sortable: true, searchable: true },
+                { title: '文件路径', dataIndex: 'file_name', editable: true, searchable: true }
             ],
             clone_status_filters: [
                 { text: '废弃/已删除', value: 'rubbish', tagType: 'red' },
@@ -468,6 +484,18 @@
             const statsWorkerRef = useRef(null);
             const [useWorker, setUseWorker] = useState(true);
             const workerUrlRef = useRef(null);
+            // 为原始数据建立稳定索引映射，确保编辑/删除时定位到原数组元素
+            const dataIndexMap = React.useMemo(() => {
+                const map = new Map();
+                data.forEach((row, idx) => map.set(row, idx));
+                return map;
+            }, [data]);
+
+            // 检测系统路径字段（支持多个）
+            const systemPathFields = React.useMemo(() => {
+                const columns = config.columns || [];
+                return columns.filter(col => col.isSystemPath === true).map(col => col.dataIndex);
+            }, [config.columns]);
 
             // 列与枚举过滤映射，避免频繁 find 与属性访问
             const columnMap = React.useMemo(() => {
@@ -1365,6 +1393,66 @@
                         <div className="op-buttons">
                             <Button size="small" block onClick={() => showJsonModal(record)}>JSON编辑</Button>
                             <Button size="small" block onClick={() => startModalEdit(record)}>编辑</Button>
+                            {systemPathFields.length > 0 && window && window.desktopFs && window.desktopFs.deletePaths && systemPathFields.some(field => record[field] && typeof record[field] === 'string' && record[field].trim()) && (
+                                <Button
+                                    size="small"
+                                    block
+                                    danger
+                                    onClick={async () => {
+                                        try {
+                                            // 收集该行的所有系统路径
+                                            const paths = systemPathFields
+                                                .map(field => record[field])
+                                                .filter(path => path && typeof path === 'string' && path.trim())
+                                                .map(path => path.trim());
+
+                                            if (paths.length === 0) {
+                                                message.warning('该行没有有效的系统路径');
+                                                return;
+                                            }
+
+                                            Modal.confirm({
+                                                title: '确认删除系统文件',
+                                                content: (
+                                                    <div>
+                                                        <div>确定要删除以下系统文件？</div>
+                                                        {paths.map((path, idx) => (
+                                                            <div key={idx} style={{ wordBreak: 'break-all', marginTop: 4, padding: 4, background: '#f5f5f5', borderRadius: 4 }}>
+                                                                {path}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ),
+                                                okText: '删除',
+                                                okType: 'danger',
+                                                cancelText: '取消',
+                                                onOk: async () => {
+                                                    const res = await window.desktopFs.deletePaths({
+                                                        paths,
+                                                        recursive: true,
+                                                        force: true
+                                                    });
+                                                    if (res && res.ok) {
+                                                        message.success(`已删除 ${res.deleted.length} 个系统文件`);
+                                                        // 删除成功后，从数据中移除该行
+                                                        setData(prev => prev.filter(row => row !== record));
+                                                    } else {
+                                                        const failed = (res && res.failed) ? res.failed.length : 0;
+                                                        const deleted = (res && res.deleted) ? res.deleted.length : 0;
+                                                        message.warning(`删除失败：成功 ${deleted}，失败 ${failed}`);
+                                                        // 部分成功时，只移除成功删除的行
+                                                        if (deleted > 0) {
+                                                            setData(prev => prev.filter(row => row !== record));
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        } catch (e) {
+                                            message.error('删除失败');
+                                        }
+                                    }}
+                                >删除文件</Button>
+                            )}
                             <Popconfirm title="确定删除？" onConfirm={() => deleteRow(record)}>
                                 <Button size="small" block danger>删除</Button>
                             </Popconfirm>
@@ -1381,7 +1469,7 @@
                 if (editMode === 'modal') return;
                 // 如果已处于当前行的行内编辑，再次双击则保存
                 const isDefault = !(config.rowKey && config.rowKey !== 'default');
-                const currentKey = isDefault ? record.__row_index : record[config.rowKey];
+                const currentKey = isDefault ? record.__orig_index : record[config.rowKey];
                 if (editingKey === currentKey && editMode === 'inline') {
                     saveEdit();
                     setEditingCol('');
@@ -1400,7 +1488,7 @@
                 }
                 setEditRow({ ...record });
                 const isDefault = !(config.rowKey && config.rowKey !== 'default');
-                const currentKey = isDefault ? record.__row_index : record[config.rowKey];
+                const currentKey = isDefault ? record.__orig_index : record[config.rowKey];
                 setEditingKey(currentKey);
                 setEditMode('modal');
             }
@@ -1408,10 +1496,10 @@
             function saveEdit() {
                 const isDefault = !(config.rowKey && config.rowKey !== 'default');
                 if (isDefault) {
-                    const index = editRow.__row_index;
+                    const index = editRow.__orig_index;
                     setData(prev => prev.map((row, idx) => {
                         if (idx === index) {
-                            const { __row_index, ...rest } = editRow || {};
+                            const { __orig_index, __row_index, ...rest } = editRow || {};
                             return { ...rest };
                         }
                         return row;
@@ -1434,7 +1522,7 @@
             function deleteRow(record) {
                 const isDefault = !(config.rowKey && config.rowKey !== 'default');
                 if (isDefault) {
-                    setData(prev => prev.filter((_, idx) => idx !== record.__row_index));
+                    setData(prev => prev.filter((_, idx) => idx !== record.__orig_index));
                 } else {
                     setData(prev => prev.filter(row => row[config.rowKey] !== record[config.rowKey]));
                 }
@@ -1443,7 +1531,7 @@
 
             // 原始JSON
             function showJsonModal(record) {
-                const { __row_index, ...cleaned } = record || {};
+                const { __orig_index, __row_index, ...cleaned } = record || {};
                 setJsonModal({ visible: true, record: { ...record }, text: JSON.stringify(cleaned, null, 2) });
             }
             function saveJsonModal() {
@@ -1451,7 +1539,7 @@
                     const obj = JSON.parse(jsonModal.text);
                     const isDefault = !(config.rowKey && config.rowKey !== 'default');
                     if (isDefault) {
-                        const index = jsonModal.record && jsonModal.record.__row_index;
+                        const index = jsonModal.record && jsonModal.record.__orig_index;
                         if (typeof index === 'number') {
                             setData(prev => prev.map((row, idx) => (idx === index ? obj : row)));
                         }
@@ -1696,6 +1784,78 @@
                             </Upload>
                             <Button onClick={exportConfigFile}>导出配置</Button>
                             <Button onClick={openConfigDrawer}>设置</Button>
+                            {systemPathFields.length > 0 && window && window.desktopFs && window.desktopFs.deletePaths && (
+                                <Button
+                                    onClick={async () => {
+                                        try {
+                                            // 收集所有行的所有系统路径字段
+                                            const systemPaths = [];
+                                            filteredData.forEach(row => {
+                                                systemPathFields.forEach(field => {
+                                                    const path = row[field];
+                                                    if (path && typeof path === 'string' && path.trim()) {
+                                                        systemPaths.push(path.trim());
+                                                    }
+                                                });
+                                            });
+
+                                            if (systemPaths.length === 0) {
+                                                message.warning('当前数据中没有有效的系统路径');
+                                                return;
+                                            }
+
+                                            Modal.confirm({
+                                                title: '确认删除系统文件',
+                                                content: (
+                                                    <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                                                        <div>将删除以下 {systemPaths.length} 个系统路径：</div>
+                                                        {systemPaths.map((path, idx) => (
+                                                            <div key={idx} style={{ wordBreak: 'break-all', marginTop: 4, padding: 4, background: '#f5f5f5', borderRadius: 4 }}>
+                                                                {path}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ),
+                                                okText: '删除',
+                                                okType: 'danger',
+                                                cancelText: '取消',
+                                                onOk: async () => {
+                                                    const res = await window.desktopFs.deletePaths({ paths: systemPaths, recursive: true, force: true });
+                                                    if (res && res.ok) {
+                                                        message.success(`已删除 ${res.deleted.length} 个系统文件`);
+                                                        // 删除成功后，从数据中移除对应的行
+                                                        const deletedPaths = new Set(res.deleted);
+                                                        setData(prev => prev.filter(row => {
+                                                            // 检查该行是否还有任何未删除的系统路径
+                                                            return !systemPathFields.some(field => {
+                                                                const path = row[field];
+                                                                return path && deletedPaths.has(path.trim());
+                                                            });
+                                                        }));
+                                                    } else {
+                                                        const failed = (res && res.failed) ? res.failed.length : 0;
+                                                        const deleted = (res && res.deleted) ? res.deleted.length : 0;
+                                                        message.warning(`部分失败：成功 ${deleted}，失败 ${failed}`);
+                                                        // 部分成功时，只移除成功删除的行
+                                                        if (deleted > 0) {
+                                                            const deletedPaths = new Set(res.deleted);
+                                                            setData(prev => prev.filter(row => {
+                                                                // 检查该行是否还有任何未删除的系统路径
+                                                                return !systemPathFields.some(field => {
+                                                                    const path = row[field];
+                                                                    return path && deletedPaths.has(path.trim());
+                                                                });
+                                                            }));
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        } catch (e) {
+                                            message.error('删除失败');
+                                        }
+                                    }}
+                                >系统删除</Button>
+                            )}
                             <Button onClick={() => setStatsDrawer(true)} disabled={!data.length}>数据统计</Button>
                             <Button onClick={clearData} disabled={!data.length} danger>清空数据</Button>
                             <Button onClick={resetConfig}>重置配置</Button>
@@ -1714,7 +1874,7 @@
                     </div>
                     <div className="table-container">
                         <Table
-                            dataSource={filteredData.map((row, idx) => ({ ...row, __row_index: idx }))}
+                            dataSource={filteredData.map((row) => ({ ...row, __orig_index: dataIndexMap.get(row) }))}
                             columns={columns.map(col => {
                                 if (!col.editable) return col;
                                 return {
@@ -1724,14 +1884,14 @@
                                         editable: col.editable.toString(),
                                         dataIndex: col.dataIndex,
                                         title: col.title,
-                                        editing: ((config.rowKey && config.rowKey !== 'default') ? (editingKey === record[config.rowKey]) : (editingKey === record.__row_index)) && editMode === 'inline',
+                                        editing: ((config.rowKey && config.rowKey !== 'default') ? (editingKey === record[config.rowKey]) : (editingKey === record.__orig_index)) && editMode === 'inline',
                                         onDoubleClick: () => {
                                             startInlineEdit(record, col.dataIndex);
                                         }
                                     })
                                 };
                             })}
-                            rowKey={config.rowKey && config.rowKey !== 'default' ? config.rowKey : '__row_index'}
+                            rowKey={config.rowKey && config.rowKey !== 'default' ? config.rowKey : '__orig_index'}
                             pagination={{
                                 pageSize: tablePageSize,
                                 current: tableCurrentPage,
@@ -1801,7 +1961,7 @@
                     >
                         <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                             <Form layout="horizontal" labelAlign="right" labelCol={{ span: 4 }} wrapperCol={{ span: 19 }}>
-                                {editRow && Object.keys(editRow).filter(key => key !== '__row_index').map(key => {
+                                {editRow && Object.keys(editRow).filter(key => key !== '__orig_index' && key !== '__row_index').map(key => {
                                     const colConf = columnMap[key];
                                     const editable = colConf ? !!colConf.editable : true;
                                     const filters = config[key + '_filters'] || [];
@@ -2547,6 +2707,8 @@
                 <App />
             </ConfigProvider>
         );
+        // 初始资源加载完后移除首屏遮罩（复用全局方法）
+        try { hideGlobalOverlay(); } catch { }
     </script>
 </body>
 
