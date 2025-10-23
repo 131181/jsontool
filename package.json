@@ -1,14 +1,44 @@
 {
-    "name": "JSONTool-桌面版",
+    "name": "json-tool-desktop",
     "version": "1.0.3",
     "private": true,
     "main": "electron-main.js",
-    "description": "JSON 管理器（桌面应用）",
+    "description": "JSON 管理器",
+    "author": "lansi",
     "scripts": {
         "start": "electron .",
+        "build": "electron-builder",
+        "build-win": "electron-builder --win",
+        "build-mac": "electron-builder --mac",
+        "build-linux": "electron-builder --linux",
+        "dist": "electron-builder --publish=never",
         "postinstall": "echo 已完成依赖安装"
     },
+    "build": {
+        "appId": "com.lansi.jsontool",
+        "productName": "JSON管理器",
+        "directories": {
+            "output": "dist"
+        },
+        "files": [
+            "**/*",
+            "!node_modules/**/*",
+            "!dist/**/*",
+            "!*.md"
+        ],
+        "win": {
+            "icon": "assets/icon.ico",
+            "target": "portable"
+        },
+        "mac": {
+            "target": "dmg"
+        },
+        "linux": {
+            "target": "AppImage"
+        }
+    },
     "devDependencies": {
-        "electron": "^36.5.0"
+        "electron": "^36.5.0",
+        "electron-builder": "^26.0.12"
     }
 }

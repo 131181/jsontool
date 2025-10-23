@@ -399,12 +399,12 @@
             ],
             columns: [
                 { title: '名称', dataIndex: 'name', editable: true, sortable: true, searchable: true },
-                { title: 'URL', dataIndex: 'url', editable: true, searchable: true },
-                { title: '更新时间', dataIndex: 'updated_at', editable: true, sortable: true, searchable: true, isDate: true, dateFormat: 'YYYY-MM-DD HH:mm:ss' },
-                { title: '克隆时间', dataIndex: 'cloned_at', editable: true, sortable: true, searchable: true },
-                { title: '克隆状态', dataIndex: 'clone_status', editable: true, sortable: true, searchable: true },
-                { title: '文件夹名', dataIndex: 'folder_name', editable: true, sortable: true, searchable: true },
-                { title: '文件路径', dataIndex: 'file_name', editable: true, searchable: true }
+                { title: 'URL', dataIndex: 'url', editable: true },
+                { title: '更新时间', dataIndex: 'updated_at', editable: true, sortable: true, isDate: true, dateFormat: 'YYYY-MM-DD HH:mm:ss' },
+                { title: '克隆时间', dataIndex: 'cloned_at', editable: true, sortable: true, isDate: true, dateFormat: 'YYYY-MM-DD HH:mm:ss' },
+                { title: '克隆状态', dataIndex: 'clone_status', editable: true, sortable: true },
+                { title: '文件夹名', dataIndex: 'folder_name', editable: true, sortable: true },
+                { title: '文件路径', dataIndex: 'file_name', editable: true, isSystemPath: true }
             ],
             clone_status_filters: [
                 { text: '废弃/已删除', value: 'rubbish', tagType: 'red' },
@@ -1416,6 +1416,9 @@
                                                 content: (
                                                     <div>
                                                         <div>确定要删除以下系统文件？</div>
+                                                        <div style={{ color: '#666', fontSize: '12px', marginBottom: '8px' }}>
+                                                            注意：此操作只删除系统文件，不会删除JSON数据
+                                                        </div>
                                                         {paths.map((path, idx) => (
                                                             <div key={idx} style={{ wordBreak: 'break-all', marginTop: 4, padding: 4, background: '#f5f5f5', borderRadius: 4 }}>
                                                                 {path}
@@ -1423,7 +1426,7 @@
                                                         ))}
                                                     </div>
                                                 ),
-                                                okText: '删除',
+                                                okText: '删除文件',
                                                 okType: 'danger',
                                                 cancelText: '取消',
                                                 onOk: async () => {
@@ -1434,15 +1437,37 @@
                                                     });
                                                     if (res && res.ok) {
                                                         message.success(`已删除 ${res.deleted.length} 个系统文件`);
-                                                        // 删除成功后，从数据中移除该行
-                                                        setData(prev => prev.filter(row => row !== record));
+                                                        // 删除成功后，不删除JSON数据，只更新系统路径字段为空
+                                                        setData(prev => prev.map(row => {
+                                                            if (row === record) {
+                                                                const updatedRow = { ...row };
+                                                                systemPathFields.forEach(field => {
+                                                                    updatedRow[field] = '';
+                                                                });
+                                                                return updatedRow;
+                                                            }
+                                                            return row;
+                                                        }));
                                                     } else {
                                                         const failed = (res && res.failed) ? res.failed.length : 0;
                                                         const deleted = (res && res.deleted) ? res.deleted.length : 0;
                                                         message.warning(`删除失败：成功 ${deleted}，失败 ${failed}`);
-                                                        // 部分成功时，只移除成功删除的行
+                                                        // 部分成功时，只更新成功删除的路径字段
                                                         if (deleted > 0) {
-                                                            setData(prev => prev.filter(row => row !== record));
+                                                            const deletedPaths = new Set(res.deleted);
+                                                            setData(prev => prev.map(row => {
+                                                                if (row === record) {
+                                                                    const updatedRow = { ...row };
+                                                                    systemPathFields.forEach(field => {
+                                                                        const path = row[field];
+                                                                        if (path && deletedPaths.has(path.trim())) {
+                                                                            updatedRow[field] = '';
+                                                                        }
+                                                                    });
+                                                                    return updatedRow;
+                                                                }
+                                                                return row;
+                                                            }));
                                                         }
                                                     }
                                                 }
@@ -1453,8 +1478,8 @@
                                     }}
                                 >删除文件</Button>
                             )}
-                            <Popconfirm title="确定删除？" onConfirm={() => deleteRow(record)}>
-                                <Button size="small" block danger>删除</Button>
+                            <Popconfirm title="确定删除JSON数据？" onConfirm={() => deleteRow(record)}>
+                                <Button size="small" block danger>删除数据</Button>
                             </Popconfirm>
                         </div>
                     )
@@ -1809,6 +1834,9 @@
                                                 content: (
                                                     <div style={{ maxHeight: 200, overflowY: 'auto' }}>
                                                         <div>将删除以下 {systemPaths.length} 个系统路径：</div>
+                                                        <div style={{ color: '#666', fontSize: '12px', marginBottom: '8px' }}>
+                                                            注意：此操作只删除系统文件，不会删除JSON数据
+                                                        </div>
                                                         {systemPaths.map((path, idx) => (
                                                             <div key={idx} style={{ wordBreak: 'break-all', marginTop: 4, padding: 4, background: '#f5f5f5', borderRadius: 4 }}>
                                                                 {path}
@@ -1816,35 +1844,41 @@
                                                         ))}
                                                     </div>
                                                 ),
-                                                okText: '删除',
+                                                okText: '删除文件',
                                                 okType: 'danger',
                                                 cancelText: '取消',
                                                 onOk: async () => {
                                                     const res = await window.desktopFs.deletePaths({ paths: systemPaths, recursive: true, force: true });
                                                     if (res && res.ok) {
                                                         message.success(`已删除 ${res.deleted.length} 个系统文件`);
-                                                        // 删除成功后，从数据中移除对应的行
+                                                        // 删除成功后，不删除JSON数据，只更新系统路径字段为空
                                                         const deletedPaths = new Set(res.deleted);
-                                                        setData(prev => prev.filter(row => {
-                                                            // 检查该行是否还有任何未删除的系统路径
-                                                            return !systemPathFields.some(field => {
+                                                        setData(prev => prev.map(row => {
+                                                            const updatedRow = { ...row };
+                                                            systemPathFields.forEach(field => {
                                                                 const path = row[field];
-                                                                return path && deletedPaths.has(path.trim());
+                                                                if (path && deletedPaths.has(path.trim())) {
+                                                                    updatedRow[field] = '';
+                                                                }
                                                             });
+                                                            return updatedRow;
                                                         }));
                                                     } else {
                                                         const failed = (res && res.failed) ? res.failed.length : 0;
                                                         const deleted = (res && res.deleted) ? res.deleted.length : 0;
                                                         message.warning(`部分失败：成功 ${deleted}，失败 ${failed}`);
-                                                        // 部分成功时，只移除成功删除的行
+                                                        // 部分成功时，只更新成功删除的路径字段
                                                         if (deleted > 0) {
                                                             const deletedPaths = new Set(res.deleted);
-                                                            setData(prev => prev.filter(row => {
-                                                                // 检查该行是否还有任何未删除的系统路径
-                                                                return !systemPathFields.some(field => {
+                                                            setData(prev => prev.map(row => {
+                                                                const updatedRow = { ...row };
+                                                                systemPathFields.forEach(field => {
                                                                     const path = row[field];
-                                                                    return path && deletedPaths.has(path.trim());
+                                                                    if (path && deletedPaths.has(path.trim())) {
+                                                                        updatedRow[field] = '';
+                                                                    }
                                                                 });
+                                                                return updatedRow;
                                                             }));
                                                         }
                                                     }
