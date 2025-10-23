@@ -5,7 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JSON管理器</title>
-    <link rel="stylesheet" href="https://unpkg.com/antd@5.27.2/dist/antd.min.css">
+    <!-- <link rel="stylesheet" href="https://unpkg.com/antd@5.27.2/dist/antd.min.css"> -->
+    <link rel="stylesheet" href="libs/reset.css">
     <style>
         html,
         body,
@@ -130,15 +131,24 @@
         </div>
     </div>
     <div id="root"></div>
-    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <!-- <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/dayjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/locale/zh-cn.js"></script>
-    <script src="https://unpkg.com/dayjs@1.11.13/plugin/customParseFormat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/plugin/customParseFormat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/antd@5.27.2/dist/antd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/antd@5.27.2/dist/antd-with-locales.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script> -->
+    <script src="libs/react.production.min.js"></script>
+    <script src="libs/react-dom.production.min.js"></script>
+    <script src="libs/dayjs.min.js"></script>
+    <script src="libs/zh-cn.js"></script>
+    <script src="libs/customParseFormat.js"></script>
+    <script src="libs/antd.min.js"></script>
+    <script src="libs/antd-with-locales.min.js"></script>
+    <script src="libs/babel.min.js"></script>
+    <script src="libs/echarts.min.js"></script>
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
         const { Table, Input, Button, Modal, Form, Select, Space, Popconfirm, message, Upload, Drawer, Tag, Typography, DatePicker, Statistic, Row, Col, Card, Tooltip } = antd;
@@ -302,12 +312,23 @@
                     trends.labels = labels; trends.values = values; trends.field = trendField; trends.granularity = granularity;
                 }
                 }
-            } catch {}
+            } catch (error) {
+                console.warn('Worker统计计算出错:', error);
+            }
             self.postMessage({ enumDistribution, fieldStats, numericStats, timeRange, trends });
             };
         `;
+        // 常量定义
+        const CONSTANTS = {
+            WORKER_THRESHOLD: 5000,           // Worker使用阈值
+            DEBOUNCE_DELAY: 120,              // 防抖延迟（毫秒）
+            TABLE_MARGIN: 170,               // 表格额外边距
+            CHART_RENDER_DELAY: 120,         // 图表渲染延迟
+            TRANSITION_DELAY: 0               // 过渡延迟
+        };
+
         // 简单防抖封装
-        function debounceRender(timerRef, fn, delay) {
+        function debounceRender(timerRef, fn, delay = CONSTANTS.DEBOUNCE_DELAY) {
             if (timerRef.current) clearTimeout(timerRef.current);
             timerRef.current = setTimeout(fn, delay);
         }
@@ -459,6 +480,8 @@
             const [isPending, startTransition] = React.useTransition();
             const pageSizeChangingRef = React.useRef(false);
             const pageChangingRef = React.useRef(false);
+            const pageTransitionTimeoutRef = React.useRef(null);
+            const pageSizeTransitionTimeoutRef = React.useRef(null);
             const [editingCol, setEditingCol] = useState('');
             const toolbarRef = React.useRef(null);
             // 设置抽屉中 JSON 字段的临时草稿，允许中间态为无效 JSON
@@ -485,6 +508,7 @@
             const [useWorker, setUseWorker] = useState(true);
             const workerUrlRef = useRef(null);
             // 为原始数据建立稳定索引映射，确保编辑/删除时定位到原数组元素
+            // 使用Map而不是数组索引，避免数据变化时索引错位
             const dataIndexMap = React.useMemo(() => {
                 const map = new Map();
                 data.forEach((row, idx) => map.set(row, idx));
@@ -492,6 +516,7 @@
             }, [data]);
 
             // 检测系统路径字段（支持多个）
+            // 用于系统文件删除功能，识别哪些列包含文件路径
             const systemPathFields = React.useMemo(() => {
                 const columns = config.columns || [];
                 return columns.filter(col => col.isSystemPath === true).map(col => col.dataIndex);
@@ -516,7 +541,7 @@
             useEffect(() => {
                 function updateHeight() {
                     const toolbarHeight = toolbarRef.current ? toolbarRef.current.offsetHeight : 0;
-                    setTableHeight(window.innerHeight - toolbarHeight - 170); // 170为额外margin，可微调
+                    setTableHeight(window.innerHeight - toolbarHeight - CONSTANTS.TABLE_MARGIN);
                 }
                 updateHeight();
                 window.addEventListener('resize', updateHeight);
@@ -542,6 +567,14 @@
             // 计算统计数据
             // 简易签名与缓存，避免重复计算
             const lastStatsCacheRef = useRef({ sig: '', stats: null });
+            const dataVersionRef = useRef(0);
+
+            // 包装setData函数，在数据修改时更新版本号
+            const updateDataWithVersion = (updater) => {
+                dataVersionRef.current += 1;
+                setData(updater);
+            };
+
             function simpleHashString(str) {
                 let h = 0;
                 for (let i = 0; i < str.length; i += Math.ceil(str.length / 1024) || 1) {
@@ -551,9 +584,7 @@
             }
             function computeSignature(dataArr, cfg, trendField, gran) {
                 const len = dataArr.length;
-                // 只取前后各5条进行签名，平衡成本与准确性
-                const head = dataArr.slice(0, 5);
-                const tail = dataArr.slice(-5);
+                // 使用数据版本号确保数据变化时缓存失效
                 const cfgPick = {
                     columns: (cfg.columns || []).map(c => ({ k: c.dataIndex, t: c.title, d: c.isDate })),
                 };
@@ -561,7 +592,8 @@
                 Object.keys(cfg).filter(k => k.endsWith('_filters')).sort().forEach(k => {
                     cfgPick[k] = Array.isArray(cfg[k]) ? cfg[k].length : 0;
                 });
-                const str = JSON.stringify({ len, head, tail, cfgPick, trendField, gran });
+
+                const str = JSON.stringify({ len, cfgPick, trendField, gran, dataVersion: dataVersionRef.current });
                 return simpleHashString(str);
             }
             function getCachedOrComputeStats(dataArr, trendField, granularity, totalCountOverride) {
@@ -946,7 +978,7 @@
 
             // 更新统计数据（完整统计）
             useEffect(() => {
-                const shouldUseWorker = useWorker && typeof Worker !== 'undefined' && filteredData.length > 5000;
+                const shouldUseWorker = useWorker && typeof Worker !== 'undefined' && filteredData.length > CONSTANTS.WORKER_THRESHOLD;
                 if (shouldUseWorker) {
                     try {
                         const worker = ensureStatsWorker();
@@ -984,7 +1016,9 @@
                         };
                         worker.postMessage({ data: filteredData, filtersMap, columns: columns.map(c => ({ dataIndex: c.dataIndex, title: c.title, isDate: !!c.isDate })), trendField: selectedTrendField, granularity: trendGranularity });
                         return;
-                    } catch { }
+                    } catch (error) {
+                        console.warn('Worker统计计算失败，回退到主线程:', error);
+                    }
                 }
                 const stats = getCachedOrComputeStats(filteredData, selectedTrendField, trendGranularity, data.length);
                 setStatsData(stats);
@@ -1180,7 +1214,7 @@
 
             useEffect(() => {
                 if (statsDrawer && trendChartRef.current) {
-                    debounceRender(trendRenderTimerRef, renderTrendChart, 120);
+                    debounceRender(trendRenderTimerRef, renderTrendChart, CONSTANTS.CHART_RENDER_DELAY);
                 } else if (!statsDrawer && trendChartInstance.current) {
                     trendChartInstance.current.dispose();
                     trendChartInstance.current = null;
@@ -1199,18 +1233,31 @@
                         trendChartInstance.current = null;
                     }
                     if (statsWorkerRef.current) {
-                        try { statsWorkerRef.current.terminate(); } catch { }
+                        try { statsWorkerRef.current.terminate(); } catch (error) {
+                            console.warn('Worker终止失败:', error);
+                        }
                         statsWorkerRef.current = null;
                     }
                     if (workerUrlRef.current) {
-                        try { URL.revokeObjectURL(workerUrlRef.current); } catch { }
+                        try { URL.revokeObjectURL(workerUrlRef.current); } catch (error) {
+                            console.warn('URL清理失败:', error);
+                        }
                         workerUrlRef.current = null;
+                    }
+                    // 清理分页相关的timeout
+                    if (pageTransitionTimeoutRef.current) {
+                        clearTimeout(pageTransitionTimeoutRef.current);
+                        pageTransitionTimeoutRef.current = null;
+                    }
+                    if (pageSizeTransitionTimeoutRef.current) {
+                        clearTimeout(pageSizeTransitionTimeoutRef.current);
+                        pageSizeTransitionTimeoutRef.current = null;
                     }
                 };
             }, []);
 
             // 工具栏列搜索控件
-            const renderColumnSearchInputs = React.useMemo(() => () => (
+            const renderColumnSearchInputs = React.useCallback(() => (
                 (config.columns || []).filter(col => col.searchable !== false).map(col => {
                     const filterKey = col.dataIndex + '_filters';
                     const filters = config[filterKey];
@@ -1265,7 +1312,7 @@
                         />
                     );
                 })
-            ), [config, columnSearch]);
+            ), [config.columns, columnSearch]);
 
             // 通用字符串比较
             const createStringComparator = (dataIndex) => (a, b) => {
@@ -1438,7 +1485,7 @@
                                                     if (res && res.ok) {
                                                         message.success(`已删除 ${res.deleted.length} 个系统文件`);
                                                         // 删除成功后，不删除JSON数据，只更新系统路径字段为空
-                                                        setData(prev => prev.map(row => {
+                                                        updateDataWithVersion(prev => prev.map(row => {
                                                             if (row === record) {
                                                                 const updatedRow = { ...row };
                                                                 systemPathFields.forEach(field => {
@@ -1455,7 +1502,7 @@
                                                         // 部分成功时，只更新成功删除的路径字段
                                                         if (deleted > 0) {
                                                             const deletedPaths = new Set(res.deleted);
-                                                            setData(prev => prev.map(row => {
+                                                            updateDataWithVersion(prev => prev.map(row => {
                                                                 if (row === record) {
                                                                     const updatedRow = { ...row };
                                                                     systemPathFields.forEach(field => {
@@ -1522,7 +1569,7 @@
                 const isDefault = !(config.rowKey && config.rowKey !== 'default');
                 if (isDefault) {
                     const index = editRow.__orig_index;
-                    setData(prev => prev.map((row, idx) => {
+                    updateDataWithVersion(prev => prev.map((row, idx) => {
                         if (idx === index) {
                             const { __orig_index, __row_index, ...rest } = editRow || {};
                             return { ...rest };
@@ -1530,7 +1577,7 @@
                         return row;
                     }));
                 } else {
-                    setData(prev => prev.map(row => (row[config.rowKey] === editRow[config.rowKey] ? editRow : row)));
+                    updateDataWithVersion(prev => prev.map(row => (row[config.rowKey] === editRow[config.rowKey] ? editRow : row)));
                 }
                 setEditingKey('');
                 setEditRow(null);
@@ -1547,9 +1594,9 @@
             function deleteRow(record) {
                 const isDefault = !(config.rowKey && config.rowKey !== 'default');
                 if (isDefault) {
-                    setData(prev => prev.filter((_, idx) => idx !== record.__orig_index));
+                    updateDataWithVersion(prev => prev.filter((_, idx) => idx !== record.__orig_index));
                 } else {
-                    setData(prev => prev.filter(row => row[config.rowKey] !== record[config.rowKey]));
+                    updateDataWithVersion(prev => prev.filter(row => row[config.rowKey] !== record[config.rowKey]));
                 }
                 message.success('已删除');
             }
@@ -1566,10 +1613,10 @@
                     if (isDefault) {
                         const index = jsonModal.record && jsonModal.record.__orig_index;
                         if (typeof index === 'number') {
-                            setData(prev => prev.map((row, idx) => (idx === index ? obj : row)));
+                            updateDataWithVersion(prev => prev.map((row, idx) => (idx === index ? obj : row)));
                         }
                     } else {
-                        setData(prev => prev.map(row => (row[config.rowKey] === obj[config.rowKey] ? obj : row)));
+                        updateDataWithVersion(prev => prev.map(row => (row[config.rowKey] === obj[config.rowKey] ? obj : row)));
                     }
                     setJsonModal({ visible: false, record: null });
                     message.success('已保存');
@@ -1591,7 +1638,7 @@
                         } catch {
                             parsed = parseJsonl(text);
                         }
-                        setData(parsed);
+                        updateDataWithVersion(() => parsed);
                         setLogFileName(file.name);
                         message.success('JSON已导入');
                     } catch (e) {
@@ -1635,7 +1682,7 @@
                     cancelText: '取消',
                     okType: 'danger',
                     onOk: () => {
-                        setData([]);
+                        updateDataWithVersion(() => []);
                         message.success('数据已清空');
                     }
                 });
@@ -1668,7 +1715,7 @@
                     cancelText: '取消',
                     okType: 'danger',
                     onOk: () => {
-                        setData([]);
+                        updateDataWithVersion(() => []);
                         setConfig(defaultConfig);
                         setConfigFileName('config.json');
                         setLogFileName('clone_log.jsonl');
@@ -1703,7 +1750,8 @@
                     if (field.type === 'json') {
                         try {
                             draft[field.key] = JSON.stringify(config[field.key] ?? null, null, 2);
-                        } catch {
+                        } catch (error) {
+                            console.warn(`配置项${field.key}序列化失败:`, error);
                             draft[field.key] = String(config[field.key] ?? '');
                         }
                     }
@@ -1712,7 +1760,8 @@
                 // 保存原始快照用于放弃修改时恢复
                 try {
                     setConfigOriginal(JSON.parse(JSON.stringify(config)));
-                } catch {
+                } catch (error) {
+                    console.warn('配置快照创建失败:', error);
                     setConfigOriginal(config);
                 }
                 setConfigDirty(false);
@@ -1853,7 +1902,7 @@
                                                         message.success(`已删除 ${res.deleted.length} 个系统文件`);
                                                         // 删除成功后，不删除JSON数据，只更新系统路径字段为空
                                                         const deletedPaths = new Set(res.deleted);
-                                                        setData(prev => prev.map(row => {
+                                                        updateDataWithVersion(prev => prev.map(row => {
                                                             const updatedRow = { ...row };
                                                             systemPathFields.forEach(field => {
                                                                 const path = row[field];
@@ -1870,7 +1919,7 @@
                                                         // 部分成功时，只更新成功删除的路径字段
                                                         if (deleted > 0) {
                                                             const deletedPaths = new Set(res.deleted);
-                                                            setData(prev => prev.map(row => {
+                                                            updateDataWithVersion(prev => prev.map(row => {
                                                                 const updatedRow = { ...row };
                                                                 systemPathFields.forEach(field => {
                                                                     const path = row[field];
@@ -1932,19 +1981,40 @@
                                 showSizeChanger: true,
                                 pageSizeOptions: ['10', '20', '50', '100'],
                                 onChange: (page, size) => {
-                                    // 立即展示覆盖层，避免页面阻塞前看不到动画
-                                    if (size && size !== tablePageSize && !pageSizeChangingRef.current) {
-                                        pageSizeChangingRef.current = true;
-                                        showGlobalOverlay();
-                                    }
-                                    // 页码切换时也展示覆盖层，并以过渡方式更新
-                                    if (page !== tableCurrentPage && !pageChangingRef.current) {
-                                        pageChangingRef.current = true;
-                                        showGlobalOverlay();
+                                    // 分页逻辑：分离处理每页条数变化和页码变化
+                                    // 每页条数变化时，重置到第一页避免显示错误
+                                    if (size && size !== tablePageSize) {
+                                        if (!pageSizeChangingRef.current) {
+                                            pageSizeChangingRef.current = true;
+                                            showGlobalOverlay();
+                                        }
                                         // 推迟到下一事件循环，确保覆盖层先插入 DOM 并绘制
-                                        setTimeout(() => {
+                                        if (pageSizeTransitionTimeoutRef.current) {
+                                            clearTimeout(pageSizeTransitionTimeoutRef.current);
+                                        }
+                                        pageSizeTransitionTimeoutRef.current = setTimeout(() => {
+                                            startTransition(() => {
+                                                setTablePageSize(size);
+                                                // 每页条数变化时，重置到第一页
+                                                setTableCurrentPage(1);
+                                            });
+                                            pageSizeTransitionTimeoutRef.current = null;
+                                        }, CONSTANTS.TRANSITION_DELAY);
+                                    }
+                                    // 处理页码变化（仅在每页条数不变时）
+                                    else if (page !== tableCurrentPage && size === tablePageSize) {
+                                        if (!pageChangingRef.current) {
+                                            pageChangingRef.current = true;
+                                            showGlobalOverlay();
+                                        }
+                                        // 推迟到下一事件循环，确保覆盖层先插入 DOM 并绘制
+                                        if (pageTransitionTimeoutRef.current) {
+                                            clearTimeout(pageTransitionTimeoutRef.current);
+                                        }
+                                        pageTransitionTimeoutRef.current = setTimeout(() => {
                                             startTransition(() => setTableCurrentPage(page));
-                                        }, 0);
+                                            pageTransitionTimeoutRef.current = null;
+                                        }, CONSTANTS.TRANSITION_DELAY);
                                     }
                                 },
                                 onShowSizeChange: (current, size) => {
@@ -1955,8 +2025,12 @@
                                         showGlobalOverlay();
                                     }
                                     // 推迟到下一事件循环，确保覆盖层先插入 DOM 并绘制
-                                    setTimeout(() => {
+                                    if (pageSizeTransitionTimeoutRef.current) {
+                                        clearTimeout(pageSizeTransitionTimeoutRef.current);
+                                    }
+                                    pageSizeTransitionTimeoutRef.current = setTimeout(() => {
                                         startTransition(() => setTablePageSize(size));
+                                        pageSizeTransitionTimeoutRef.current = null;
                                     }, 0);
                                 }
                             }}
@@ -2029,7 +2103,8 @@
                                                             try {
                                                                 const parsed = JSON.parse(val);
                                                                 setEditRow({ ...editRow, [key]: parsed });
-                                                            } catch {
+                                                            } catch (error) {
+                                                                console.warn(`JSON解析失败:`, error);
                                                                 setEditRow({ ...editRow, [key]: val });
                                                             }
                                                         }}
@@ -2111,7 +2186,9 @@
                                         try {
                                             setConfig({ ...config, fieldEnum: JSON.parse(e.target.value) });
                                             setConfigDirty(true);
-                                        } catch { }
+                                        } catch (error) {
+                                            console.warn('fieldEnum解析失败:', error);
+                                        }
                                     }}
                                 />
                             </Form.Item>
@@ -2125,7 +2202,10 @@
                                                 value={Object.prototype.hasOwnProperty.call(configJsonDraft, field.key)
                                                     ? configJsonDraft[field.key]
                                                     : (() => {
-                                                        try { return JSON.stringify(config[field.key] ?? null, null, 2); } catch { return String(config[field.key] ?? ''); }
+                                                        try { return JSON.stringify(config[field.key] ?? null, null, 2); } catch (error) {
+                                                            console.warn(`配置项${field.key}序列化失败:`, error);
+                                                            return String(config[field.key] ?? '');
+                                                        }
                                                     })()}
                                                 onChange={e => {
                                                     const val = e.target.value;
@@ -2135,7 +2215,10 @@
                                                     try {
                                                         const parsed = JSON.parse(val);
                                                         setConfig(prev => ({ ...prev, [field.key]: parsed }));
-                                                    } catch { /* ignore preview when invalid */ }
+                                                    } catch (error) {
+                                                        console.warn(`配置项${field.key}解析失败:`, error);
+                                                        /* ignore preview when invalid */
+                                                    }
                                                 }}
                                             />
                                         </Form.Item>
@@ -2190,7 +2273,7 @@
                                 setResetConfigModal(false);
                             }}>保留数据并重置</Button>,
                             <Button key="clear" danger onClick={() => {
-                                setData([]);
+                                updateDataWithVersion(() => []);
                                 setConfig(defaultConfig);
                                 setConfigFileName('config.json');
                                 message.success('数据已清空，配置已重置为默认值');
@@ -2219,7 +2302,7 @@
                             }}>保留数据并导入</Button>,
                             <Button key="clear" danger onClick={() => {
                                 if (importConfigModal.newConfig) {
-                                    setData([]);
+                                    updateDataWithVersion(() => []);
                                     setConfig(importConfigModal.newConfig);
                                     setConfigFileName(importConfigModal.fileName || 'config.json');
                                     message.success('数据已清空，配置文件已导入');
@@ -2695,7 +2778,8 @@
                                         try {
                                             const parsed = JSON.parse(val);
                                             setEditRow({ ...editRow, [dataIndex]: parsed });
-                                        } catch {
+                                        } catch (error) {
+                                            console.warn(`行内编辑JSON解析失败:`, error);
                                             setEditRow({ ...editRow, [dataIndex]: val });
                                         }
                                     }}
@@ -2742,7 +2826,9 @@
             </ConfigProvider>
         );
         // 初始资源加载完后移除首屏遮罩（复用全局方法）
-        try { hideGlobalOverlay(); } catch { }
+        try { hideGlobalOverlay(); } catch (error) {
+            console.warn('首屏遮罩移除失败:', error);
+        }
     </script>
 </body>
 

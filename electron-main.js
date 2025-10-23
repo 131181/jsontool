@@ -2,6 +2,9 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron')
 const path = require('path');
 const fs = require('fs');
 
+// 设置应用基本信息
+app.setName('JSON管理器');
+
 let mainWindow;
 let splashWindow;
 
@@ -41,7 +44,9 @@ function createWindow() {
             nodeIntegration: false,
             sandbox: true,
             // 开发场景加载本地 file:// 资源以避免 CORS 限制
-            webSecurity: false
+            webSecurity: false,
+            // 生产环境禁用开发者工具
+            devTools: process.env.NODE_ENV === 'development'
         }
     });
 
@@ -76,6 +81,22 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    try {
+        const aboutOptions = {
+            applicationName: 'JSON管理器',
+            applicationVersion: 'v0.3.2',
+            copyright: '© 2025 JSON管理器',
+            credits: '基于 Electron 构建的 JSON 数据管理工具\n\n功能特性：\n• 支持 JSON/JSONL 文件导入导出\n• 可配置的表格列显示\n• 数据统计和可视化分析\n• 系统文件管理功能\n• 数据质量评估\n\n技术栈：\n• Electron + React + Ant Design\n• ECharts 图表库\n• Day.js 时间处理\n\n作者：lansi\n网站：https://github.com/131181/jsontool',
+            website: 'https://github.com/131181/jsontool',
+            iconPath: path.join(__dirname, 'assets', 'icon.ico'),
+            authors: ['lansi'],
+        };
+
+        app.setAboutPanelOptions(aboutOptions);
+    } catch (e) {
+        console.log('设置关于面板失败:', e);
+    }
+
     // 设置中文菜单
     try { createMenu(); } catch { }
     createWindow();
@@ -133,10 +154,13 @@ function createMenu() {
         {
             label: '视图',
             submenu: [
-                { role: 'reload', label: '重新加载' },
-                { role: 'forceReload', label: '强制重载' },
-                { role: 'toggleDevTools', label: '切换开发者工具' },
-                { type: 'separator' },
+                // 开发环境才显示开发相关菜单
+                ...(process.env.NODE_ENV === 'development' ? [
+                    { role: 'reload', label: '重新加载' },
+                    { role: 'forceReload', label: '强制重载' },
+                    { role: 'toggleDevTools', label: '切换开发者工具' },
+                    { type: 'separator' },
+                ] : []),
                 { role: 'resetZoom', label: '重置缩放' },
                 { role: 'zoomIn', label: '放大' },
                 { role: 'zoomOut', label: '缩小' },
